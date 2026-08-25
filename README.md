@@ -42,8 +42,8 @@ Ubuntu 22.04 + ROS 2 Humble 만 있는 PC  ->  이 저장소  ->  같은 시스�
 ## 빠른 시작
 
 ```bash
-git clone <이 저장소> ~/lidar-drone-positioning
-cd ~/lidar-drone-positioning
+git clone https://github.com/jaewdq/LidarDronePositioning.git
+cd LidarDronePositioning
 ./setup.sh
 ```
 
@@ -63,7 +63,7 @@ ros2 launch dual_ouster_driver dual_os1.launch.py
 ros2 topic hz /lidar1/points          # 10 근처면 정상
 ```
 
-**그다음 반드시 보정을 해야 한다** (아래 5장). 보정값은 설치 장소마다 다르다.
+**그다음 반드시 보정을 해야 한다** (아래 4장). 보정값은 설치 장소마다 다르다.
 
 ---
 
@@ -90,14 +90,14 @@ ros2 topic hz /lidar1/points          # 10 근처면 정상
 
 ---
 
-## 2. 네트워크 — 라우터도 DHCP 도 없다
+## 2. 네트워크 — 어떻게 연결하나
 
-가장 헷갈리는 부분이라 먼저 정리한다.
+### 2.1 개념: 라우터도 DHCP 도 없다
 
 **라이다는 자기 IP 를 스스로 기억한다.** 공유기가 나눠주는 게 아니다.
-센서 안에 `192.168.6.11/24` 가 저장돼 있고 전원을 넣으면 그 주소로 뜬다.
+센서 안에 주소가 저장돼 있고 전원을 넣으면 그대로 뜬다.
 
-**PC 는 유선 랜카드에 같은 대역 주소를 직접 박아둔다.** `192.168.6.100/24`.
+**PC 는 유선 랜카드에 같은 대역 주소를 직접 박아둔다.**
 
 ```
     PC  192.168.6.100/24  ──[스위치]──  라이다1  192.168.6.11/24
@@ -107,28 +107,21 @@ ros2 topic hz /lidar1/points          # 10 근처면 정상
 ```
 
 `/24` 는 앞 세 자리(`192.168.6.`)가 같으면 같은 동네라는 뜻이다. 같은 동네면
-게이트웨이를 거치지 않고 바로 패킷이 오간다.
-
-그래서 이 연결에는 **공유기도 DHCP 서버도 필요 없다.**
+게이트웨이를 거치지 않고 바로 패킷이 오간다. **공유기도 DHCP 서버도 필요 없다.**
 
 > **게이트웨이를 설정하면 안 된다.** 설정하면 PC 의 인터넷 기본 경로를 가로챈다.
 > `setup.sh` 는 `ipv4.gateway` 를 비워둔다.
 
-### 주소 대역 고르기
-
-`192.168.6.x` 는 임의로 고른 것이다. 두 조건만 지키면 된다.
+주소 대역(`192.168.6.x`)은 임의로 고른 것이다. 두 조건만 지키면 된다.
 
 1. PC 와 라이다가 **같은 대역**
-2. **와이파이 대역과 안 겹칠 것**
-
-2번이 함정이다. 와이파이가 `192.168.6.x` 를 받으면 커널이 어느 쪽으로 보낼지
-헷갈려 라이다가 안 잡힌다. 그럴 땐 `192.168.7.x` 등으로 옮긴다(PC·센서 양쪽 다).
+2. **와이파이 대역과 안 겹칠 것** — 겹치면 커널이 어느 쪽으로 보낼지 헷갈린다
 
 ```bash
-ip -br addr show          # 와이파이 대역 확인
+ip -br addr show          # 와이파이가 무슨 대역을 쓰는지 확인
 ```
 
-### 배선
+### 2.2 배선
 
 ```
    라이다 ──(전용 케이블)── 인터커넥터 ──(랜선)──┐
@@ -140,62 +133,72 @@ ip -br addr show          # 와이파이 대역 확인
 라이다 한 대면 스위치 없이 PC 직결도 된다. 요즘 랜카드는 Auto-MDIX 라
 크로스 케이블도 필요 없다.
 
----
+### 2.3 PC 쪽 — setup.sh 가 한다
 
-## 3. 라이다 IP 설정
+NetworkManager 에 `ouster` 프로파일을 만들어 유선 랜카드에 고정 IP 를 준다.
+랜선을 꽂으면 자동으로 올라온다.
 
-`setup.sh` 는 **PC 쪽만** 설정한다. 센서 IP 는 센서에 저장돼 있어서 따로 바꿔야 한다.
+```bash
+# setup.sh 가 하는 일 (수동으로 할 때)
+nmcli con add type ethernet ifname enp59s0 con-name ouster \
+  ipv4.method manual ipv4.addresses 192.168.6.100/24 \
+  ipv6.method auto autoconnect yes
+```
 
-### 지금 IP 를 아는 경우
+### 2.4 라이다 쪽 — 센서에 저장된 IP
+
+센서 IP 는 센서가 기억하므로 **PC 를 바꿔도 유지된다.** 바꿀 일이 있을 때만
+건드리면 된다.
 
 ```bash
 curl -s http://192.168.6.11/api/v1/system/network | python3 -m json.tool
+#   "override": "192.168.6.11/24"      <- 저장된 고정 주소
 ```
-
-```json
-{ "ipv4": { "addr": "192.168.6.11/24", "override": "192.168.6.11/24" } }
-```
-
-`override` 가 저장된 고정 주소다. 바꾸려면:
-
-```bash
-curl -s -X PUT http://192.168.6.11/api/v1/system/network/ipv4/override \
-  -H 'Content-Type: application/json' -d '"192.168.6.11/24"'
-```
-
-### IP 를 모르는 경우 — mDNS
-
-Ouster 는 `os-<시리얼>.local` 로 자기를 광고한다.
-
-```bash
-avahi-browse -art | grep -iA3 ouster
-```
-
-```
-= enp59s0 IPv6 Ouster Sensor 122451001190   _ouster-lidar._tcp   local
-   hostname = [os-122451001190.local]
-   address  = [fe80::be0f:a7ff:fe00:da36]
-```
-
-**IPv4 가 겹쳐도 IPv6 링크로컬은 MAC 기반이라 항상 고유하다.**
-
-```bash
-IP6="fe80::be0f:a7ff:fe00:da36%enp59s0"    # % 뒤는 인터페이스 이름
-
-curl -s -g "http://[$IP6]/api/v1/sensor/metadata/sensor_info"   # 시리얼 먼저 확인
-curl -s -g -X PUT "http://[$IP6]/api/v1/system/network/ipv4/override" \
-  -H 'Content-Type: application/json' -d '"192.168.6.12/24"'
-```
-
-`-g` 는 대괄호를 글로브로 해석하지 말라는 뜻이다. IPv6 에는 필수.
 
 > **두 센서가 같은 IP 로 출하되는 경우가 있다.** 실제로 둘 다 `192.168.6.11`
-> 이어서 서브넷을 훑어도 한 대만 잡혔다. 한 대만 나오면 이걸 의심하고
-> 위 mDNS 방법으로 찾는다.
+> 이어서 서브넷을 훑어도 한 대만 잡혔고, 라이다2 를 `.12` 로 바꿔야 했다.
+> IPv4 가 겹쳐도 IPv6 링크로컬은 MAC 기반이라 고유하므로 그쪽으로 붙어서
+> 고친다. 방법은 [docs/DUAL_LIDAR.md](docs/DUAL_LIDAR.md) 2.1 에 있다.
+
+### 2.5 10 Hz 가 나오게 하기 — DDS 프로파일
+
+**이걸 빠뜨리면 데이터는 오는데 초당 프레임이 무너진다.** 설정 자체는
+`setup.sh` 가 하지만, 왜 필요한지는 알아둘 필요가 있다.
+
+포인트클라우드 한 프레임이 약 **2 MB** 다. Fast DDS 는 기본 공유메모리 공간이
+작아서 이걸 못 담고 UDP 로 우회하는데, 2 MB 는 **약 1400조각**으로 쪼개지고
+**조각 하나만 잃어도 프레임 전체가 버려진다.**
+
+`config/fastdds_large.xml` 이 공유메모리 공간을 64 MB 로 키워 조각내기 자체를
+없앤다. 환경변수로 지정한다.
+
+```bash
+export FASTRTPS_DEFAULT_PROFILES_FILE=<저장소>/src/dual_ouster_driver/config/fastdds_large.xml
+```
+
+실측 차이:
+
+| | 없을 때 | 있을 때 |
+|---|---|---|
+| 1 대 | 3.5 Hz | 10.0 Hz |
+| **2 대** | **2.0 / 1.4 Hz** | **10.01 / 10.01 Hz** |
+
+**2대에서 훨씬 심하다.** 40 MB/s 라서.
+
+```bash
+echo $FASTRTPS_DEFAULT_PROFILES_FILE     # 비어 있으면 이게 원인
+source ~/.bashrc
+```
+
+> **BEST_EFFORT 와 혼동하지 말 것.** 이건 다른 문제다.
+> 드라이버는 포인트클라우드를 BEST_EFFORT 로 발행한다(느린 구독자 때문에
+> 센서가 밀리면 안 되므로). 그래서 RELIABLE 로 구독하면 **연결 자체가 안 되고
+> 아무 경고도 없다.** `ros2 topic hz` 가 아무것도 안 보여줄 때 이걸 의심한다.
+> Hz 가 낮은 것과는 원인이 다르다 — 위 프로파일 문제다.
 
 ---
 
-## 4. 확인 사다리 — 안 될 때 이 순서로
+## 3. 확인 사다리 — 안 될 때 이 순서로
 
 각 단계가 다른 종류의 고장을 잡아낸다. **위에서부터** 짚는다.
 
@@ -246,22 +249,18 @@ curl -s http://192.168.6.11/api/v1/sensor/config | grep udp_dest
 ros2 topic hz /lidar1/points            # 10 근처
 ```
 
-**10 이 아니라 1~4 로 나오면** DDS 프로파일이 빠진 것이다.
-
-```bash
-echo $FASTRTPS_DEFAULT_PROFILES_FILE    # 비어 있으면 문제
-source ~/.bashrc
-```
+**1~4 로 나오면** DDS 프로파일 누락 (2.5 참고).
+**아무것도 안 나오면** 구독 QoS 문제이거나 토픽이 없는 것이다.
 
 ---
 
-## 5. 보정 — 설치할 때마다 해야 한다
+## 4. 보정 — 설치할 때마다 해야 한다
 
 **보정값은 라이다 위치·자세·설치 장소마다 전부 다르다.** 저장소에는 예시
 (`*.yaml.example`)만 들어 있고, 실제 값은 현장에서 만들어야 한다.
 남의 보정값을 쓰면 **오류 없이 조용히 틀린 좌표**가 나온다.
 
-### 5.1 먼저 수평을 맞춘다
+### 4.1 먼저 수평을 맞춘다
 
 ```bash
 ros2 run dual_ouster_driver tilt_check
@@ -283,7 +282,7 @@ ros2 run dual_ouster_driver tilt_check
 | 1.0도 | 7.0 cm | 17.5 cm | 34.9 cm |
 | 0.2도 | 1.4 cm | 3.5 cm | 7.0 cm |
 
-### 5.2 마커를 준비한다
+### 4.2 마커를 준비한다
 
 원기둥이면 된다. **지름을 줄자로 재서** 반지름(÷2)을 넣는다.
 
@@ -292,12 +291,10 @@ ros2 run dual_ouster_driver tilt_check
 지름 10 cm  ->  -p marker_radius:=0.05
 ```
 
-> 라이다가 추정한 반지름은 **믿으면 안 된다.** 실제로 이 추정을 믿었다가
-> 지름을 21.6cm 로 잘못 잡아(실제 9.4cm) 원점에 61mm 오차가 났다.
 
 높이는 **30cm 이상**이 좋다. 낮으면 바닥 컷에 대부분이 잘려나가 멀리 못 놓는다.
 
-### 5.3 보정 실행
+### 4.3 보정 실행
 
 ```bash
 ros2 run dual_ouster_driver calibrate --ros-args \
@@ -320,7 +317,7 @@ ros2 run dual_ouster_driver calibrate --ros-args \
 - **M1·M2 측정 사이에 마커 말고 아무것도 움직이면 안 된다**
   (라이다2 가 "움직인 물체 = 마커" 로 자동 판별한다)
 
-### 5.4 결과 확인
+### 4.4 결과 확인
 
 ```
 [교차검증] 각 라이다가 잰 M1-M2 간격
@@ -332,7 +329,7 @@ ros2 run dual_ouster_driver calibrate --ros-args \
 
 두 라이다 사이 거리도 출력하니 줄자로 맞춰본다.
 
-### 5.5 눈으로 겹침 확인
+### 4.5 눈으로 겹침 확인
 
 ```bash
 ros2 launch dual_ouster_driver dual_view.launch.py z_min:=0.05
@@ -349,7 +346,7 @@ ros2 launch dual_ouster_driver dual_view.launch.py z_min:=0.05
 
 ---
 
-## 6. 비행 기록과 분석
+## 5. 비행 기록과 분석
 
 ```bash
 ros2 launch dual_ouster_driver record_flight.launch.py label:=run1
@@ -377,7 +374,7 @@ xdg-open ~/flights/flight_xxx/flight_3d.html
 
 ---
 
-## 7. 저장소 구성
+## 6. 저장소 구성
 
 ```
 ├─ setup.sh                     설치 (여러 번 돌려도 안전)
@@ -420,7 +417,7 @@ FW 3.2 미만 센서는 `WINDOW` 필드를 안 보내는데 상위 코드가 무
 
 ---
 
-## 8. 자주 겪는 문제
+## 7. 자주 겪는 문제
 
 | 증상 | 원인 | 해결 |
 |---|---|---|
@@ -448,7 +445,7 @@ ros2 daemon stop && rm -f /dev/shm/fastrtps_*
 
 ---
 
-## 9. 알려진 한계
+## 8. 알려진 한계
 
 **두 라이다를 합치는 코드가 없다.** 각자 따로 위치를 낸다. 좌표계는 8mm 로
 잘 맞는 것이 확인됐지만, 합칠 노드가 없어서 2대의 이점을 못 쓰고 있다.
@@ -466,7 +463,7 @@ ros2 daemon stop && rm -f /dev/shm/fastrtps_*
 
 ---
 
-## 10. 다른 PC 로 옮길 때 빠뜨리기 쉬운 것
+## 9. 다른 PC 로 옮길 때 빠뜨리기 쉬운 것
 
 `setup.sh` 가 처리하지만, 수동으로 할 때를 위해 적어둔다.
 
