@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!--
+  Fast DDS 전송 설정 — 큰 포인트클라우드 전용
+
+  왜 필요한가:
+    /lidar1/points 한 프레임이 약 2 MB 다. 기본 설정에서 Fast DDS 는 같은
+    PC 안에서도 UDP 로 보내는데, 2 MB 는 UDP 패킷 약 1400 개로 쪼개진다.
+    조각 하나만 잃어도 메시지 전체가 버려지므로 프레임이 대량 유실된다.
+
+  실측 (OS1-128, 1024x10):
+    기본 설정   평균 3.5 Hz,  간격 편차 398 ms
+    이 설정     평균 10.0 Hz, 간격 편차 0.5 ms      <- 유실 0
+
+  적용:
+    export FASTRTPS_DEFAULT_PROFILES_FILE=<이 파일 경로>
+-->
+<profiles xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+    <transport_descriptors>
+        <!-- 같은 PC 안에서는 공유메모리로. 복사도 조각내기도 없다. -->
+        <transport_descriptor>
+            <transport_id>shm_tr</transport_id>
+            <type>SHM</type>
+            <segment_size>67108864</segment_size>
+        </transport_descriptor>
+        <!-- 다른 PC 로 나갈 때를 위한 UDP. 버퍼를 크게 잡는다. -->
+        <transport_descriptor>
+            <transport_id>udp_big</transport_id>
+            <type>UDPv4</type>
+            <sendBufferSize>16777216</sendBufferSize>
+            <receiveBufferSize>16777216</receiveBufferSize>
+        </transport_descriptor>
+    </transport_descriptors>
+
+    <participant profile_name="big_data" is_default_profile="true">
+        <rtps>
+            <userTransports>
+                <transport_id>shm_tr</transport_id>
+                <transport_id>udp_big</transport_id>
+            </userTransports>
+            <useBuiltinTransports>false</useBuiltinTransports>
+        </rtps>
+    </participant>
+</profiles>

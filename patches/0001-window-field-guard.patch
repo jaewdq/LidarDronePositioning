@@ -1,0 +1,45 @@
+diff --git a/ouster-ros/src/point_cloud_compose.h b/ouster-ros/src/point_cloud_compose.h
+index 66e1730..687c59d 100644
+--- a/ouster-ros/src/point_cloud_compose.h
++++ b/ouster-ros/src/point_cloud_compose.h
+@@ -1,5 +1,8 @@
+ #pragma once
+ 
++#include <cstddef>
++#include <vector>
++
+ #include <pcl_conversions/pcl_conversions.h>
+ #include <sensor_msgs/msg/point_cloud2.hpp>
+ 
+@@ -56,6 +59,19 @@ constexpr auto make_lidar_scan_tuple() {
+     }
+ }
+ 
++/**
++ * @brief returns a pointer to a zero-filled buffer of at least n elements of
++ * type T. Used as a stand-in for LidarScan fields that a profile's field
++ * table expects but that the connected sensor doesn't populate (e.g. WINDOW
++ * on firmware < 3.2).
++ */
++template <typename T>
++const T* zero_field_buffer(std::size_t n) {
++    static thread_local std::vector<T> buf;
++    if (buf.size() < n) buf.assign(n, T{});
++    return buf.data();
++}
++
+ /**
+  * @brief maps the fields of a LidarScan object to the elements of the supplied
+  * tuple in the same order.
+@@ -72,7 +88,10 @@ void map_lidar_scan_fields_to_tuple(Tuple& tp, const ouster::sdk::core::LidarSca
+             std::remove_pointer_t<std::tuple_element_t<Index, Tuple>>>;
+         static_assert(std::is_same_v<ElementType, FieldType>,
+                       "tuple element, field element types mismatch!");
+-        std::get<Index>(tp) = ls.field<FieldType>(Table[Index].first).data();
++        std::get<Index>(tp) = ls.has_field(Table[Index].first)
++            ? ls.field<FieldType>(Table[Index].first).data()
++            : zero_field_buffer<FieldType>(
++                  static_cast<std::size_t>(ls.w) * static_cast<std::size_t>(ls.h));
+         map_lidar_scan_fields_to_tuple<Index + 1, N, Table>(tp, ls);
+     }
+ }

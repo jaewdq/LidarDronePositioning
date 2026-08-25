@@ -1,0 +1,19 @@
+# colcon 산물
+build/
+install/
+log/
+
+# 파이썬
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# 현장마다 다시 측정해야 하는 값. 예시(.example)만 저장소에 둔다
+src/dual_ouster_driver/config/calibration_lidar*.yaml
+
+# 센서 메타데이터 덤프
+*-metadata.json
+
+# 비행 기록
+flights/
+*.db3
