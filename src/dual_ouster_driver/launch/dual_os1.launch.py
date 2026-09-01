@@ -50,7 +50,35 @@ def make_lidar(idx, host):
         parameters=[{
             'sensor_hostname': host,
             'lidar_mode': '1024x10',
-            'timestamp_mode': 'TIME_FROM_ROS_TIME',
+            # PTP. 그랜드마스터는 이 PC 의 시스템 클럭이다
+            # (sudo ptp4l -f ~/drone_ws/ptp_gm.conf -m, priority1=0).
+            # 두 센서 모두 stratum 1 / rms_offset 약 2us 로 붙는 것을
+            # 확인했다 (http://<ip>/api/v1/system/time 의 tracking).
+            #
+            # ROS_TIME 은 패킷이 호스트에 도착한 시각을 쓰기 때문에 두 센서
+            # 스탬프가 34~65ms 어긋났고, sync_tolerance_sec(10ms)에 매번
+            # 걸려 융합이 한 번도 일어나지 않았다.
+            #
+            # ptp4l 이 죽으면 센서가 동기 대상을 잃으므로 추적 전에 항상
+            # 살아 있는지 확인할 것.
+            'timestamp_mode': 'TIME_FROM_PTP_1588',
+
+            # 위상 고정은 끈 채로 둔다.
+            #
+            # 두 센서의 회전 출발 각도가 달라서 PTP 로 시계를 2us 까지
+            # 맞춘 뒤에도 스캔 시각 델타가 37ms 와 62ms 를 번갈아 남았다
+            # (37+62 = 99ms, 10Hz 한 바퀴). 위상차이지 시계 오차가 아니다.
+            #
+            # 그래서 phase_lock_enable=True, offset=0 을 넣어봤더니 센서가
+            # RUNNING 을 유지하면서도 UDP 를 아예 멈췄고, 드라이버가
+            # poll_client() 타임아웃 -> self reset 루프에 빠졌다. 설정 자체는
+            # 센서에 반영됐지만(config API 확인) 데이터가 나오지 않는다.
+            #
+            # 대신 트래커 쪽 sync_tolerance_sec 를 실제 델타보다 크게 잡아
+            # 융합이 일어나도록 한다. 37ms 어긋남은 걷는 속도(0.7m/s)에서
+            # 2.5cm 라 실내 테스트에는 충분히 작다.
+            'phase_lock_enable': False,
+            'phase_lock_offset': 0,
 
             'sensor_frame': f'lidar{idx}_sensor',
             'lidar_frame': f'lidar{idx}',

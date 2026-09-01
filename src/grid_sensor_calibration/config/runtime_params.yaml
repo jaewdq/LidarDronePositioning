@@ -1,0 +1,29 @@
+# Parameters for the runtime nodes (static TF, point transform, visualisation).
+
+sensor_tf_publisher:
+  ros__parameters:
+    # Empty entry means: publish every sensor found in the calibration file.
+    sensors: ['']
+    parent_frame: ''            # '' keeps the parent_frame stored per sensor
+
+point_transform_node:
+  ros__parameters:
+    sensors: ['sensor1', 'sensor2']
+    target_frame: grid
+    input_topic_template: '/{sensor}/target_point'
+    output_topic_template: '/{sensor}/target_point_grid'
+    input_message_type: point_stamped
+    transform_mode: tf2         # tf2 | direct
+    tf_timeout_sec: 0.2
+    use_latest_transform: true
+    fused_topic: '/targets/grid_points'
+    queue_size: 10
+
+calibration_viz_node:
+  ros__parameters:
+    frame_id: grid
+    grid_width: 24.0
+    grid_height: 15.0
+    grid_spacing: 3.0
+    residual_scale: 20.0        # exaggerate residuals so they are visible
+    publish_period_sec: 2.0

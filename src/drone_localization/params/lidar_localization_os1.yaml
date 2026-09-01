@@ -1,0 +1,345 @@
+lidar_drone_tracker:
+  ros__parameters:
+
+    # ===============================================================
+    # COMPETITION FIELD, 24 x 15 m, two ground OS1-128
+    # ===============================================================
+    #
+    # World frame: x 0..24, y 0..15, z up. Both sensors sit 2 m outside the
+    # boundary on the field centreline (x = 12), facing each other:
+    #
+    #                        +Y
+    #        lidar2 (12, 17, 2.0)  yaw -90 deg, facing -Y
+    #                         |
+    #        +----------------------------------+  y=15
+    #        |                                  |
+    #        |            24 x 15 m             |
+    #        |                                  |
+    #        +----------------------------------+  y=0
+    #                         |
+    #        lidar1 (12, -2, 2.0)  yaw +90 deg, facing +Y
+    #
+    #     x=0                                     x=24
+    #
+    # Separation 19 m. Facing each other means the far half of the field for
+    # one sensor is the near half for the other, so no point on the field is
+    # more than 14.4 m from the closer sensor.
+    #
+    # This file previously held an indoor bench setup in a 5 x 4 m room. Values
+    # tuned there are deliberately reversed here -- see the notes on
+    # cluster_min_points, cluster_max_extent and seed_at_home, each of which
+    # wants the opposite of what a small closed room wanted.
+    # ===============================================================
+
+
+    # ===============================================================
+    # LiDAR 1 -- south side
+    # ===============================================================
+    #
+    # CALIBRATED. x, y, yaw from grid_sensor_calibration on four targets at
+    # grid intersections (3,3) (21,3) (21,12) (3,12), RMS 0.153 m over 4 points
+    # at 10-17 m range. z is a tape measure, since that calibration solves a 2D
+    # rigid transform only and writes z = 0.
+    #
+    # yaw came out -89.5 deg where the nominal layout says +90. The sensor is
+    # installed 180 deg from the heading this position was drawn for -- lidar2
+    # is the same way, so it is how they were set down, not a solve artefact.
+    # Nothing needs rotating; the measured value is what the transform wants.
+    #
+    # Height 2.0 m is chosen to match the hover altitude, not for clearance.
+    # OS1's vertical FOV is +/-22.5 deg, so a target at the sensor's own height
+    # sits at 0 deg elevation at every range and there is no near blind spot at
+    # all. Each metre of difference between sensor height and hover altitude
+    # blanks out a further 2.41 m of radius around the sensor.
+    # ===============================================================
+
+    lidar1_topic: "/lidar1/points"
+
+    lidar1_x:     12.221
+    lidar1_y:     -1.934
+    lidar1_z:      0.897
+
+    lidar1_roll:   0.006799
+    lidar1_pitch: -0.000749
+    lidar1_yaw:    -1.561857
+
+
+    # ===============================================================
+    # LiDAR 2 -- north side
+    # ===============================================================
+    #
+    # CALIBRATED, same four targets, RMS 0.148 m.
+    #
+    # Solved from three live captures plus one point measured afterwards: a
+    # reset wiped the captures mid-session, and the three sensor coordinates
+    # were recovered from the capture log rather than walking the field again.
+    # The residuals are not uniform -- (21,12) sits at 0.22 m while the other
+    # three are near 0.07-0.17 m, and the radial component is -0.97%, so the
+    # grid spacing is right and that one target placement is not. Recapturing
+    # that intersection should bring RMS under 0.10 m.
+    #
+    # roll and pitch are assumed level and left at zero, and that assumption is
+    # worth checking with a spirit level here in a way it is not indoors. A 1
+    # deg tilt costs 17.5 cm of z error at 10 m and 33 cm at 19 m, and the
+    # scorer's altitude RMSE earns full marks only under 0.20 m -- so a tilt
+    # small enough to ignore in a 5 m room is enough to lose the altitude
+    # score outright on this field.
+    # ===============================================================
+
+    lidar2_topic: "/lidar2/points"
+
+    lidar2_x:     11.815
+    lidar2_y:     16.969
+    lidar2_z:      0.895
+
+    lidar2_roll:   0.002564
+    lidar2_pitch: -0.004477
+    lidar2_yaw:   1.604471
+
+
+    # ===============================================================
+    # SENSOR TIMING
+    # ===============================================================
+
+    buffer_stale_timeout: 0.25
+
+    lidar_update_rate: 10.0
+
+    # PTP puts the two clocks within a few microseconds of each other, but the
+    # heads are not phase locked, so their rotations start at different
+    # azimuths and the scan timestamps stay tens of ms apart regardless. At the
+    # 0.010 code default every frame pair failed this check and the tracker
+    # silently fell back to a single sensor. 0.080 clears the measured worst
+    # case.
+    #
+    # The cost scales with speed, and this is the one place where the field
+    # differs sharply from the bench: a fused pair can mix observations up to
+    # ~74 ms apart, which is 5 cm of smear at walking pace but 22 cm at 3 m/s.
+    # If the drone flies fast enough for that to matter, phase locking the two
+    # heads is the real fix, not a tighter tolerance here -- tightening it just
+    # returns to using one sensor at a time.
+    sync_tolerance_sec: 0.080
+
+
+    # ===============================================================
+    # VOXEL DOWNSAMPLING
+    # ===============================================================
+    #
+    # Do not set this to 0. Measured indoors on 4566 ROI points, SOR + DBSCAN
+    # cost 136 ms/frame undownsampled versus 9 ms at 0.05 -- and once a frame
+    # overruns the 100 ms budget, arriving scans age past buffer_stale_timeout
+    # and are dropped, so the tracker stops publishing entirely rather than
+    # merely slowing down.
+    #
+    # 5 cm is also well under the beam spacing at competition range (12 cm at
+    # 19 m), so downsampling costs no real detail on a distant drone.
+    # ===============================================================
+
+    voxel_leaf_size: 0.05
+
+
+    # ===============================================================
+    # WORLD-FRAME ROI
+    # ===============================================================
+    #
+    # X/Y: the 24 x 15 field with 1 m of margin, so a drone that drifts just
+    # past a boundary is still tracked rather than dropping out mid-run.
+    #
+    # Z: the hover band only. This is the one filter that keeps the ground out,
+    # and it is why background subtraction is off for this file -- with the
+    # floor already below the band there is almost nothing static left inside
+    # the ROI for a learned background to remove, and a background model brings
+    # a failure mode with it (its signature covers the ROI and both sensor
+    # poses, so any change to either silently retires it while the run carries
+    # on regardless).
+    #
+    # 0.8 m low edge: below the hover altitude with room for descent, above the
+    # ground return. Raise it if ground clutter appears; lower it only if
+    # take-off and landing need to be tracked, which is out of scope.
+    # ===============================================================
+
+    roi_x_min: -1.0
+    roi_x_max: 25.0
+
+    roi_y_min: -1.0
+    roi_y_max: 16.0
+
+    roi_z_min:  0.8
+    roi_z_max:  3.5
+
+
+    # ===============================================================
+    # STATISTICAL OUTLIER REMOVAL
+    # ===============================================================
+    #
+    # Applied per sensor, after the ROI crop and before DBSCAN. Suppresses
+    # isolated returns -- rain, dust, the occasional stray reflection -- which
+    # matter more outdoors than in a closed room.
+    # ===============================================================
+
+    sor_mean_k:    20
+    sor_std_ratio:  2.0
+
+
+    # ===============================================================
+    # DBSCAN CLUSTERING
+    # ===============================================================
+    #
+    # cluster_min_points is 2 here and 3-10 indoors, and the difference is not
+    # a preference -- it is range. A Holybro X500 is 0.5 m across and mostly
+    # open frame, so the returns fall off hard with distance: roughly 79 points
+    # at 5 m, 20 at 10 m, 9 at 15 m, 5 at 19 m. Anything above 2 starts
+    # discarding the drone in the far half of the field, and it is discarded by
+    # BOTH sensors at once, so the frame is lost outright.
+    #
+    # The cost is that 2-point noise clusters become candidates. What rejects
+    # them instead is cluster_max_extent plus the association gate: noise is
+    # scattered, so it either exceeds the extent bound or fails the gate
+    # against the filter's prediction. That is why the gate must stay enabled
+    # on this file.
+    # ===============================================================
+
+    cluster_tolerance:  0.40
+
+    cluster_min_points: 2
+
+    # Largest bounding-box side a cluster may have. 0.80 m suits an X500
+    # (0.5 m diagonal) with margin; the indoor file carries 2.00 only because a
+    # standing person was being used as a stand-in target. This is the main
+    # discriminator now that cluster_min_points is down to 2 -- extent does not
+    # change with range, while point count does.
+    cluster_max_extent: 2.00
+
+    # Kept as a guard against a runaway cluster, not as a discriminator: point
+    # count scales with 1/range^2, so no fixed cap separates drone from wall at
+    # every distance.
+    cluster_max_points: 100000
+
+
+    # ===============================================================
+    # INITIAL TRACK / HOME
+    # ===============================================================
+    #
+    # ON for the field, unlike the indoor file. Seeding only helps when the
+    # seed is somewhere the drone can actually be: indoors home (0,0) fell
+    # outside the ROI, so the association gate -- centred on the seed --
+    # rejected everything in the far half of the box and the seed had to be
+    # switched off. Here home is on the field and at hover altitude, so the
+    # seed gives cold start a real prior instead of leaving it to pick the
+    # largest cluster.
+    #
+    # Set home_x/home_y to the actual take-off pad before a scoring run.
+    # ===============================================================
+
+    seed_at_home: false
+
+    home_x: 3.0
+    home_y: 3.0
+    home_z: 2.0
+
+
+    # ===============================================================
+    # ASSOCIATION GATE
+    # ===============================================================
+    #
+    # Rejects any candidate further than this from the filter's prediction.
+    # The effective radius widens with the filter's own uncertainty
+    # (max_assoc_dist + 3 sigma) and is capped by max_assoc_dist_cap.
+    #
+    # Both must stay at real values here. With cluster_min_points at 2 the
+    # candidate list contains noise by design, and the gate is what keeps the
+    # filter from jumping to it. Disabling the gate is only defensible when the
+    # ROI is measured empty and the drone is the sole candidate, which is true
+    # of a cleared indoor box and never true of a field.
+    #
+    # The cap matters as much as the radius: without it a long dropout inflates
+    # sigma until the gate opens wide enough to latch onto anything. With it,
+    # a track that drifts too far is dropped by reset_after_frames and cold
+    # start recovers cleanly instead.
+    # ===============================================================
+
+    max_assoc_dist: 2.0
+    max_assoc_dist_cap: 4.0
+
+
+    # ===============================================================
+    # KALMAN FILTER
+    # ===============================================================
+    #
+    # proc_noise_vel 0.30 m/s per frame at 10 Hz is about 3 m/s^2, which suits
+    # a drone's manoeuvre envelope. meas_noise_pos 0.15 m is dominated by
+    # centroid error on a sparse cluster rather than the sensor's own range
+    # noise (0.5 cm), so it does not scale down with a better LiDAR.
+    # ===============================================================
+
+    proc_noise_pos: 0.05
+    proc_noise_vel: 0.30
+
+    meas_noise_pos: 0.15
+
+
+    # ===============================================================
+    # TRACK COASTING
+    # ===============================================================
+    #
+    # 15 frames = 1.5 s of pure prediction before the track is declared lost.
+    # Detection is genuinely intermittent at the far end of the field -- five
+    # points on the drone at 19 m -- so the filter has to bridge short gaps
+    # rather than resetting every time a frame comes up empty.
+    #
+    # reset_after_frames drops the filter entirely at 5 s so the next detection
+    # is free to re-lock, instead of being gated forever against a prediction
+    # that ran away long ago.
+    # ===============================================================
+
+    coast_max_frames: 15
+
+    reset_after_frames: 50
+
+
+    # ===============================================================
+    # WAYPOINT / MARKER HOVER DETECTION
+    # ===============================================================
+    #
+    # Hover is detected by "slow and near", not by a fixed dwell time, because
+    # the rules do not fix one and every team's hold looks different.
+    #
+    # The gate radius is deliberately loose. The scoring band for waypoint
+    # position estimation is under 4 m, so a radius tighter than that would
+    # throw away samples from exactly the imprecise flights the score is
+    # supposed to be able to rank.
+    # ===============================================================
+
+    waypoint_gate_radius: 4.5
+
+    waypoint_speed_threshold: 0.25
+
+    waypoint_min_frames: 4
+
+    # Ignore breaks shorter than this and treat them as the same visit. Speed
+    # estimated during a hold jitters across the threshold, and without the
+    # grace period one hold is recorded as several fragments.
+    waypoint_grace_frames: 5
+
+
+    # ===============================================================
+    # MARKER LOCATIONS
+    # ===============================================================
+    #
+    # PLACEHOLDERS on 3 m grid intersections. Replace with the measured marker
+    # positions before scoring -- the scorer's hover and segment terms are
+    # computed against these coordinates, so a wrong marker here does not
+    # produce a wrong-looking number, it produces a plausible one.
+    # ===============================================================
+
+    marker1_x:  3.0
+    marker1_y:  12.0
+
+    marker2_x:  12.0
+    marker2_y: 6.0
+
+    marker3_x: 21.0
+    marker3_y:  3.0
+
+    marker4_x: 18.0
+    marker4_y: 9.0

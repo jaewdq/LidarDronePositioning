@@ -1,0 +1,31 @@
+# sensor1 calibration dataset (method A: offline YAML)
+#
+# grid_points[i] and sensor_points[i] are the SAME physical target:
+#   grid_points[i]   : surveyed position of the target in the 'grid' frame [m]
+#   sensor_points[i] : position reported by the sensor in its own frame [m]
+#
+# The measurements below are synthetic: generated from a 'true' pose
+# (x=12.2, y=-0.85, yaw=2.0 deg) with 5 mm Gaussian noise,
+# so the example is runnable before the real sensors are installed.
+# Replace sensor_points with the values recorded in the field.
+
+sensor_name: sensor1
+parent_frame: grid
+child_frame: sensor1
+
+nominal_pose:
+  x: 12.0
+  y: -1.0
+  yaw: 0.0
+
+grid_points:
+  - [3.000, 3.000]
+  - [21.000, 3.000]
+  - [21.000, 12.000]
+  - [3.000, 12.000]
+
+sensor_points:
+  - [-9.0640, 4.1699]
+  - [8.9195, 3.5475]
+  - [9.2463, 12.5336]
+  - [-8.7475, 13.1648]

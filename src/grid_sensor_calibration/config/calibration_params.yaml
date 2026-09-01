@@ -1,0 +1,42 @@
+# Parameters for the per-sensor calibration nodes.
+#
+# The launch file starts one node per sensor and names it "<sensor>_calibration",
+# so adding sensor3 only means: a new config/sensor3.yaml dataset, a new block
+# here, and adding "sensor3" to the launch argument. No code change.
+
+/**:
+  ros__parameters:
+    parent_frame: grid
+
+    # Validation
+    minimum_number_of_points: 2     # mathematical minimum; 4+ recommended
+    minimum_baseline: 1.0           # [m] minimum spatial spread of the targets
+    method: closed_form             # closed_form | svd
+
+    # Behaviour
+    auto_calibrate: true            # calibrate once at start-up from input_file
+    save_result: true
+    print_residual_table: true
+    shutdown_after_calibration: false
+
+    # Live capture (method B); ignored when auto_calibrate succeeds from file
+    input_message_type: point_stamped   # point_stamped | pose_stamped | point
+    capture_sample_count: 10
+
+sensor1_calibration:
+  ros__parameters:
+    sensor_name: sensor1
+    child_frame: sensor1
+    nominal_x: 12.0
+    nominal_y: -1.0
+    nominal_yaw: 0.0
+    input_topic: /sensor1/target_point
+
+sensor2_calibration:
+  ros__parameters:
+    sensor_name: sensor2
+    child_frame: sensor2
+    nominal_x: 12.0
+    nominal_y: 16.0
+    nominal_yaw: 0.0
+    input_topic: /sensor2/target_point
