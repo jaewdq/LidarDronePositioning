@@ -26,14 +26,9 @@ setup(
     entry_points={
         'console_scripts': [
             'lidar_drone_tracker = drone_localization.lidar_drone_tracker:main',
-            'lidar_drone_tracker_ekf = drone_localization.lidar_drone_tracker_ekf:main',
-            'lidar_drone_tracker_seq = drone_localization.lidar_drone_tracker_seq:main',
-            'estimate_viz = drone_localization.estimate_viz:main',
-            'flight_recorder = drone_localization.flight_recorder:main',
-            'plot_flight = drone_localization.plot_flight:main',
             'analyze_waypoints = drone_localization.analyze_waypoints:main',
-            'plot_flight_3d = drone_localization.plot_flight_3d:main',
             'plot_run = drone_localization.plot_run:main',
+            'run_report = drone_localization.run_report:main',
         ],
     },
 )

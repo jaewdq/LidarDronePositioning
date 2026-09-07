@@ -36,65 +36,53 @@ lidar_drone_tracker:
     # LiDAR 1 -- south side
     # ===============================================================
     #
-    # CALIBRATED. x, y, yaw from grid_sensor_calibration on four targets at
-    # grid intersections (3,3) (21,3) (21,12) (3,12), RMS 0.153 m over 4 points
-    # at 10-17 m range. z is a tape measure, since that calibration solves a 2D
-    # rigid transform only and writes z = 0.
-    #
-    # yaw came out -89.5 deg where the nominal layout says +90. The sensor is
-    # installed 180 deg from the heading this position was drawn for -- lidar2
-    # is the same way, so it is how they were set down, not a solve artefact.
-    # Nothing needs rotating; the measured value is what the transform wants.
-    #
-    # Height 2.0 m is chosen to match the hover altitude, not for clearance.
-    # OS1's vertical FOV is +/-22.5 deg, so a target at the sensor's own height
-    # sits at 0 deg elevation at every range and there is no near blind spot at
-    # all. Each metre of difference between sensor height and hover altitude
-    # blanks out a further 2.41 m of radius around the sensor.
+    # TEST calibration from the 2026-09-04 manual-click dataset. Residual
+    # outliers 0, 2 and 7 were excluded; the remaining 6 points give
+    # RMS 0.155 m. Replace with an automatic target fit for precision use.
     # ===============================================================
 
     lidar1_topic: "/lidar1/points"
 
-    lidar1_x:     12.221
-    lidar1_y:     -1.934
-    lidar1_z:      0.897
+    lidar1_x:     11.909
+    lidar1_y:     -2.017
+    lidar1_z:      1.981
 
-    lidar1_roll:   0.006799
-    lidar1_pitch: -0.000749
-    lidar1_yaw:    -1.561857
+    lidar1_roll:  -0.001826
+    lidar1_pitch:  0.000621
+    lidar1_yaw:   -1.577381
 
 
     # ===============================================================
     # LiDAR 2 -- north side
     # ===============================================================
     #
-    # CALIBRATED, same four targets, RMS 0.148 m.
-    #
-    # Solved from three live captures plus one point measured afterwards: a
-    # reset wiped the captures mid-session, and the three sensor coordinates
-    # were recovered from the capture log rather than walking the field again.
-    # The residuals are not uniform -- (21,12) sits at 0.22 m while the other
-    # three are near 0.07-0.17 m, and the radial component is -0.97%, so the
-    # grid spacing is right and that one target placement is not. Recapturing
-    # that intersection should bring RMS under 0.10 m.
-    #
-    # roll and pitch are assumed level and left at zero, and that assumption is
-    # worth checking with a spirit level here in a way it is not indoors. A 1
-    # deg tilt costs 17.5 cm of z error at 10 m and 33 cm at 19 m, and the
-    # scorer's altitude RMSE earns full marks only under 0.20 m -- so a tilt
-    # small enough to ignore in a 5 m room is enough to lose the altitude
-    # score outright on this field.
+    # TEST calibration from the 2026-09-04 manual-click dataset. Residual
+    # outliers 0, 2 and 7 were excluded; the remaining 6 points give
+    # RMS 0.121 m. Replace with an automatic target fit for precision use.
     # ===============================================================
 
     lidar2_topic: "/lidar2/points"
 
-    lidar2_x:     11.815
-    lidar2_y:     16.969
-    lidar2_z:      0.895
+    lidar2_x:     12.144
+    lidar2_y:     17.024
+    lidar2_z:      1.972
 
-    lidar2_roll:   0.002564
-    lidar2_pitch: -0.004477
-    lidar2_yaw:   1.604471
+    lidar2_roll:  -0.000631
+    lidar2_pitch: -0.002513
+    lidar2_yaw:    1.553133
+
+
+    # ===============================================================
+    # COMPETITION-RUN OUTPUT / DIAGNOSTICS
+    # ===============================================================
+    # Rebuilding the two full world-frame clouds costs about 326 ms per
+    # cycle on this machine and limits the tracker to roughly 3 Hz. Neither
+    # cloud is required for pose estimation, CSV logging, or scoring.
+    publish_world_clouds: false
+    publish_filtered_clouds: false
+
+    # Enable only for a dedicated processing-period diagnosis.
+    debug_timing: false
 
 
     # ===============================================================
@@ -165,7 +153,7 @@ lidar_drone_tracker:
     roi_y_max: 16.0
 
     roi_z_min:  0.8
-    roi_z_max:  3.5
+    roi_z_max:  4.0
 
 
     # ===============================================================
@@ -201,7 +189,7 @@ lidar_drone_tracker:
 
     cluster_tolerance:  0.40
 
-    cluster_min_points: 2
+    cluster_min_points: 3
 
     # Largest bounding-box side a cluster may have. 0.80 m suits an X500
     # (0.5 m diagonal) with margin; the indoor file carries 2.00 only because a
@@ -333,7 +321,7 @@ lidar_drone_tracker:
     # ===============================================================
 
     marker1_x:  3.0
-    marker1_y:  12.0
+    marker1_y:  9.0
 
     marker2_x:  12.0
     marker2_y: 6.0

@@ -51,6 +51,14 @@ setup(
         'setuptools'
     ],
 
+    entry_points={
+        'console_scripts': [
+            'axis_probe = dual_ouster_driver.axis_probe:main',
+            'room_survey = dual_ouster_driver.room_survey:main',
+            'tilt_check = dual_ouster_driver.tilt_check:main',
+        ],
+    },
+
     zip_safe=True,
 
     maintainer='drone',

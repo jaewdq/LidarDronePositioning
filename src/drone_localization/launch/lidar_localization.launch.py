@@ -90,10 +90,7 @@ def generate_launch_description():
     tracker_executable_arg = DeclareLaunchArgument(
         'tracker_executable',
         default_value='lidar_drone_tracker',
-        description=(
-            'Tracker executable to run: lidar_drone_tracker or '
-            'lidar_drone_tracker_ekf.'
-        ),
+        description='Tracker executable to run.',
     )
 
     # Whether this launch also brings up the Ouster drivers.

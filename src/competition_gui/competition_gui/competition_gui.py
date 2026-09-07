@@ -47,7 +47,11 @@ class CompetitionGUI(Node):
         # argument added later needs no change here.
         self.declare_parameter('params_file', 'lidar_localization_os1.yaml')
         self.declare_parameter('fusion_mode', 'position')
-        self.declare_parameter('tracker_extra_args', [''])
+        # Default assumes the Ouster drivers are already running in their own
+        # terminal (dual_os1.launch.py). Restarting them on every GUI
+        # Start/Abort costs ~15s per driver, so the GUI no longer owns them.
+        # Pass tracker_extra_args:="['start_driver:=true']" to opt back in.
+        self.declare_parameter('tracker_extra_args', ['start_driver:=false'])
 
         params_file = self.get_parameter('params_file').value
         fusion_mode = self.get_parameter('fusion_mode').value
@@ -112,14 +116,24 @@ class CompetitionGUI(Node):
         # Competition data
         # ======================================================
 
-        self.base_dir = (
+        default_results_dir = str(
             Path.home() /
             'competition_results'
         )
+        self.declare_parameter('results_dir', default_results_dir)
+        self.base_dir = Path(
+            self.get_parameter('results_dir')
+            .get_parameter_value()
+            .string_value
+        ).expanduser()
 
         self.base_dir.mkdir(
             parents=True,
             exist_ok=True
+        )
+
+        self.get_logger().info(
+            f'Competition results directory: {self.base_dir}'
         )
 
         self.active = False

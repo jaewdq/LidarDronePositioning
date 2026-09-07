@@ -39,7 +39,7 @@ SENSORS = {
 UDP_DEST = '192.168.6.100'
 
 
-def make_lidar(idx, host):
+def make_lidar(idx, host, lidar_mode):
     """드라이버 노드 + 전이 이벤트 3개를 묶어서 돌려준다."""
     node = LifecycleNode(
         package='ouster_ros',
@@ -49,7 +49,7 @@ def make_lidar(idx, host):
         output='screen',
         parameters=[{
             'sensor_hostname': host,
-            'lidar_mode': '1024x10',
+            'lidar_mode': lidar_mode,
             # PTP. 그랜드마스터는 이 PC 의 시스템 클럭이다
             # (sudo ptp4l -f ~/drone_ws/ptp_gm.conf -m, priority1=0).
             # 두 센서 모두 stratum 1 / rms_offset 약 2us 로 붙는 것을
@@ -131,9 +131,10 @@ def make_lidar(idx, host):
 
 def setup(context, *args, **kwargs):
     use2 = LaunchConfiguration('enable_lidar2').perform(context)
-    acts = make_lidar(1, SENSORS[1])
+    mode = LaunchConfiguration('lidar_mode').perform(context)
+    acts = make_lidar(1, SENSORS[1], mode)
     if use2.lower() not in ('false', '0', 'no'):
-        acts += make_lidar(2, SENSORS[2])
+        acts += make_lidar(2, SENSORS[2], mode)
     return acts
 
 
@@ -142,5 +143,14 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'enable_lidar2', default_value='true',
             description='두 번째 라이다(192.168.6.12)도 띄울지'),
+        # 2048x10 은 방위각 샘플을 두 배로 늘린다. 20 m 에서 가로 점 간격이
+        # 12.3 cm -> 6.2 cm 가 되어, 지름 30 cm 마커에 링당 4~5 점이 찍힌다
+        # (1024 에서는 2.4 점이라 원피팅이 안 선다). 보정할 때만 쓰고 비행
+        # 추적은 1024x10 으로 되돌리는 것을 전제로 한다 -- 점이 두 배면
+        # 클러스터링 비용도 두 배다. 외부 파라미터는 모드와 무관하므로
+        # 되돌려도 보정값은 그대로 유효하다.
+        DeclareLaunchArgument(
+            'lidar_mode', default_value='1024x10',
+            description='512x10 | 512x20 | 1024x10 | 1024x20 | 2048x10'),
         OpaqueFunction(function=setup),
     ])

@@ -32,14 +32,6 @@ setup(
         'console_scripts': [
             'sensor_calibration_node = '
             'grid_sensor_calibration.sensor_calibration_node:main',
-            'sensor_tf_publisher = '
-            'grid_sensor_calibration.sensor_tf_publisher:main',
-            'point_transform_node = '
-            'grid_sensor_calibration.point_transform_node:main',
-            'calibration_viz_node = '
-            'grid_sensor_calibration.calibration_viz_node:main',
-            'calibration_simulation = '
-            'grid_sensor_calibration.simulation:main',
             'pointcloud_target_node = '
             'grid_sensor_calibration.pointcloud_target_node:main',
             'ground_plane_node = '
