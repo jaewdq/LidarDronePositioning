@@ -117,6 +117,9 @@ def read_params(path):
             'markers': [(i, p[f'marker{i}_x'], p[f'marker{i}_y'])
                         for i in range(1, 5)
                         if f'marker{i}_x' in p and f'marker{i}_y' in p],
+            # 마커 위 호버 목표 고도. 지면에 눕힌 마커의 법선은 +Z 라
+            # 이 값 하나로 법선 방향과 목표 높이를 같이 나타낼 수 있다.
+            'hover_z': float(p.get('home_z', 2.0)),
         }
     except KeyError:
         return None

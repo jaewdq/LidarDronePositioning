@@ -87,6 +87,7 @@ def _trajectory_json(data, speed, params, coast):
             for index, (lidar_x, lidar_y) in enumerate(
                 params.get('lidars', []), start=1)
         ]
+        payload['hoverZ'] = float(params.get('hover_z', 2.0))
     return json.dumps(
         payload, ensure_ascii=False, allow_nan=False,
         separators=(',', ':')).replace('</', '<\\/')
@@ -504,6 +505,24 @@ def write_html_report(run_dir, params=None, scenario=None):
       ctx.fillStyle = '#111827';
       ctx.font = 'bold 11px system-ui';
       ctx.fillText(`M${{marker.id}}`, label.x, label.y);
+
+      // 마커는 지면에 눕혀 있으므로 법선은 +Z 다. 그래서 법선 방향과
+      // 목표 호버 고도를 선 하나로 같이 나타낸다.
+      const hz = d.hoverZ || 2.0;
+      line3([marker.x, marker.y, 0], [marker.x, marker.y, hz],
+            '#00897b', 1.6, [5, 4]);
+      const tipA = project(marker.x - size * 0.35, marker.y, hz);
+      const tipB = project(marker.x + size * 0.35, marker.y, hz);
+      ctx.beginPath();
+      ctx.moveTo(tipA.x, tipA.y);
+      ctx.lineTo(tipB.x, tipB.y);
+      ctx.strokeStyle = '#00897b';
+      ctx.lineWidth = 1.6;
+      ctx.stroke();
+      const tipLabel = project(marker.x + size * 0.45, marker.y, hz);
+      ctx.fillStyle = '#00695c';
+      ctx.font = '10px system-ui';
+      ctx.fillText(`${{hz.toFixed(1)}} m`, tipLabel.x + 2, tipLabel.y + 3);
     }}
   }}
 
@@ -578,7 +597,8 @@ def write_html_report(run_dir, params=None, scenario=None):
     }}
     ctx.fillStyle = '#111827';
     ctx.font = '12px system-ui';
-    ctx.fillText('경로: 비행 궤적 파랑 · ROI 밖 빨강 · 코스팅 주황', 14, 22);
+    ctx.fillText('경로: 비행 궤적 파랑 · ROI 밖 빨강 · 코스팅 주황 · ' +
+                 '마커 법선(청록 점선) 끝 = 목표 호버 고도', 14, 22);
     ctx.fillText(`Z 축 ×${{zExaggeration}} (표시만 확대, 좌표값은 실제값)`, 14, 40);
     ctx.fillText(
       `FIELD ${{field.x1 - field.x0}}×${{field.y1 - field.y0}} m · ` +
