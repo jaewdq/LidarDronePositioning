@@ -519,10 +519,8 @@ def write_html_report(run_dir, params=None, scenario=None):
       ctx.strokeStyle = '#00897b';
       ctx.lineWidth = 1.6;
       ctx.stroke();
-      const tipLabel = project(marker.x + size * 0.45, marker.y, hz);
-      ctx.fillStyle = '#00695c';
-      ctx.font = '10px system-ui';
-      ctx.fillText(`${{hz.toFixed(1)}} m`, tipLabel.x + 2, tipLabel.y + 3);
+      // 고도 값은 마커마다 적지 않고 범례에 한 번만 쓴다. 넷 다 같은
+      // 값이라 반복이고, X 축 라벨과 겹치기도 한다.
     }}
   }}
 
@@ -597,13 +595,15 @@ def write_html_report(run_dir, params=None, scenario=None):
     }}
     ctx.fillStyle = '#111827';
     ctx.font = '12px system-ui';
-    ctx.fillText('경로: 비행 궤적 파랑 · ROI 밖 빨강 · 코스팅 주황 · ' +
-                 '마커 법선(청록 점선) 끝 = 목표 호버 고도', 14, 22);
-    ctx.fillText(`Z 축 ×${{zExaggeration}} (표시만 확대, 좌표값은 실제값)`, 14, 40);
+    ctx.fillText('경로: 비행 궤적 파랑 · ROI 밖 빨강 · 코스팅 주황', 14, 22);
+    ctx.fillText(
+      `마커 법선(청록 점선): 지면에서 수직, 끝이 목표 호버 고도 ` +
+      `${{(d.hoverZ || 2.0).toFixed(1)}} m`, 14, 40);
+    ctx.fillText(`Z 축 ×${{zExaggeration}} (표시만 확대, 좌표값은 실제값)`, 14, 58);
     ctx.fillText(
       `FIELD ${{field.x1 - field.x0}}×${{field.y1 - field.y0}} m · ` +
       `ROI ${{roi.x1 - roi.x0}}×${{roi.y1 - roi.y0}} m · 격자 3×3 m`,
-      14, 58);
+      14, 76);
   }}
 
   function nearestPoint(x, y) {{
