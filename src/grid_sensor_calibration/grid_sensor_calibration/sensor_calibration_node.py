@@ -879,6 +879,15 @@ class SensorCalibrationNode(Node):
 
         saved_path: Optional[str] = None
         if self.get_parameter("save_result").value:
+            # Store the ground-plane values next to x/y/yaw so apply_calibration
+            # can write all of lidarN_* into the tracker YAML from this file.
+            tilt = None
+            if self.apply_tilt_correction:
+                tilt = {
+                    "sensor_z": float(self.sensor_z),
+                    "sensor_roll": float(self.sensor_roll),
+                    "sensor_pitch": float(self.sensor_pitch),
+                }
             transform = transform_from_estimate(
                 self.sensor_name,
                 estimate,
@@ -886,6 +895,7 @@ class SensorCalibrationNode(Node):
                 child_frame=self.child_frame,
                 nominal=self.nominal_pose,
                 error=error,
+                extra=tilt,
             )
             saved_path = update_calibration_file(
                 self.calibration_file, self.sensor_name, transform

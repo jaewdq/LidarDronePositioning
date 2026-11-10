@@ -196,19 +196,23 @@ def test_empty_result_file_is_reported(tmp_path):
         load_sensor_transforms(path)
 
 
-def test_shipped_example_configuration_is_consistent():
-    """The datasets and the example result shipped in config/ must agree."""
-    import os
+def test_concurrent_updates_keep_every_sensor(tmp_path):
+    """Two calibration nodes solving at once must not drop each other's entry."""
+    import multiprocessing
 
-    config_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config")
-    if not os.path.isdir(config_dir):  # installed copy without sources
-        pytest.skip("config directory not available")
+    path = str(tmp_path / "sensors_calibration.yaml")
+    names = [f"sensor{i}" for i in range(1, 9)]
+    ctx = multiprocessing.get_context("fork")
+    procs = [ctx.Process(target=_write_one, args=(path, name)) for name in names]
+    for proc in procs:
+        proc.start()
+    for proc in procs:
+        proc.join(10)
+    assert sorted(load_sensor_transforms(path)) == names
 
-    transforms = load_sensor_transforms(os.path.join(config_dir, "sensors_calibration.yaml"))
-    for name in ("sensor1", "sensor2"):
-        dataset = load_calibration_input(os.path.join(config_dir, f"{name}.yaml"))
-        estimate = estimate_sensor_pose(dataset.sensor_points, dataset.grid_points)
-        assert estimate.tx == pytest.approx(transforms[name].x, abs=1e-6)
-        assert estimate.ty == pytest.approx(transforms[name].y, abs=1e-6)
-        assert estimate.yaw == pytest.approx(transforms[name].yaw, abs=1e-6)
-        assert estimate.rms_error < 0.02
+
+def _write_one(path, name):
+    estimate = estimate_sensor_pose(
+        np.array(TARGETS, dtype=float) - [1.0, 1.0], np.array(TARGETS, dtype=float))
+    for _ in range(20):
+        update_calibration_file(path, name, transform_from_estimate(name, estimate))

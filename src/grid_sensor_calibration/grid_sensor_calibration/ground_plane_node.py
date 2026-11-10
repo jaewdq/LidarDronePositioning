@@ -432,7 +432,7 @@ class GroundPlaneNode(Node):
             ]
 
         lines += [
-            "  paste into lidar_localization_os1.yaml:",
+            "  paste into lidar_localization_os0_indoor.yaml:",
             "",
             f"    {self._label}_z:     {height:.3f}",
             f"    {self._label}_roll:  {roll:.6f}",

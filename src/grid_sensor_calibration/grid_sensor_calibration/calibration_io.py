@@ -2,9 +2,9 @@
 
 Two file kinds are handled:
 
-1. **Calibration input** (``config/sensor1.yaml``): the known grid target
+1. **Calibration input** (e.g. ``sensor1.yaml``): the known grid target
    positions, the measured sensor points and the nominal installation pose.
-2. **Calibration output** (``config/sensors_calibration.yaml``): the estimated
+2. **Calibration output** (``sensors_calibration.yaml`` in the session folder): the estimated
    ``grid -> sensorN`` transforms, reused by the static TF publisher.
 
 The output loader accepts both the *combined* layout (recommended, several
@@ -14,6 +14,7 @@ per sensor at the top level), so hand-written files stay valid.
 
 from __future__ import annotations
 
+import fcntl
 import math
 import os
 from dataclasses import dataclass, field
@@ -505,14 +506,24 @@ def update_calibration_file(
     Returns:
         The absolute path that was written.
     """
-    existing: Dict[str, SensorTransform] = {}
-    stored_grid: Optional[Dict[str, Any]] = None
-    if os.path.isfile(os.path.expanduser(str(path))):
-        try:
-            existing = load_sensor_transforms(path)
-            raw = _read_yaml(path)
-            stored_grid = dict(raw.get("grid", {})) or None
-        except CalibrationIOError:
-            existing = {}
-    existing[sensor_name] = transform
-    return save_sensor_transforms(path, existing, grid_info or stored_grid, combined=True)
+    # Several calibration nodes (one per sensor) share this file. Without a
+    # lock, two nodes solving at the same moment both read the old file and the
+    # later write drops the other sensor's entry (seen 2026-11-03: sensor2 lost).
+    expanded = os.path.abspath(os.path.expanduser(str(path)))
+    directory = os.path.dirname(expanded)
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+    with open(expanded + ".lock", "w", encoding="utf-8") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        existing: Dict[str, SensorTransform] = {}
+        stored_grid: Optional[Dict[str, Any]] = None
+        if os.path.isfile(expanded):
+            try:
+                existing = load_sensor_transforms(expanded)
+                raw = _read_yaml(expanded)
+                stored_grid = dict(raw.get("grid", {})) or None
+            except CalibrationIOError:
+                existing = {}
+        existing[sensor_name] = transform
+        return save_sensor_transforms(expanded, existing, grid_info or stored_grid,
+                                      combined=True)

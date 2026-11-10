@@ -12,19 +12,15 @@ setup(
     data_files=[
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
-        ('share/' + package_name, ['package.xml', 'README.md']),
+        ('share/' + package_name, ['package.xml']),
         (os.path.join('share', package_name, 'config'),
             glob('config/*.yaml')),
-        (os.path.join('share', package_name, 'launch'),
-            glob('launch/*.launch.py')),
-        (os.path.join('share', package_name, 'rviz'),
-            glob('rviz/*.rviz')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
     maintainer='jaeyup',
     maintainer_email='jaeyup01@naver.com',
-    description='2D rigid-body calibration of ground sensors against a surveyed field grid',
+    description='Indoor calibration of two ground LiDARs: ground plane (z, roll, pitch) and target points (x, y, yaw)',
     license='Apache-2.0',
     # colcon selects its pytest runner based on this declaration.
     tests_require=['pytest'],
@@ -36,6 +32,10 @@ setup(
             'grid_sensor_calibration.pointcloud_target_node:main',
             'ground_plane_node = '
             'grid_sensor_calibration.ground_plane_node:main',
+            'apply_calibration = '
+            'grid_sensor_calibration.apply_calibration_node:main',
+            'calibration_gui = '
+            'grid_sensor_calibration.calibration_gui:main',
         ],
     },
 )

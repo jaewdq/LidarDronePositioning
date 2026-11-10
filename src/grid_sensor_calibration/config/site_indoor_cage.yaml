@@ -1,0 +1,59 @@
+# calibration_gui 현장 설정 — 실내 그물 케이지 (필드 3 x 2 m, OS0-SR 2대).
+# 사용법: 저장소 README.md 3장
+
+site_name: "실내 케이지 3 x 2 m"
+
+# 결과 폴더 <results_dir>/<session_prefix>_<시각>/sensors_calibration.yaml
+results_dir: "~/grid_calibration"
+session_prefix: "indoor_cage"
+
+# 3번 버튼이 값을 써 넣을 트래커 YAML
+tracker_params_file: "~/drone_project/LidarDronePositioning/src/drone_localization/params/lidar_localization_os0_indoor.yaml"
+
+# 기준점 (필드 좌표, 캡처 순서)
+grid_points:
+  - [0.0, 0.0]
+  - [3.0, 0.0]
+  - [0.0, 1.5]
+  - [3.0, 1.5]
+
+# nominal: 줄자로 잰 설치 위치 [x, y, yaw]. 예상 좌표 표시와 설치 오차 보고에만 쓴다.
+# expected_height: 센서 높이 대략값 (지면 crop 중심).
+sensors:
+  - name: sensor1
+    frame: lidar1
+    topic: /lidar1/points
+    nominal: [1.5, -0.7, -1.570796]
+    expected_height: 1.27
+  - name: sensor2
+    frame: lidar2
+    topic: /lidar2/points
+    nominal: [1.5, 2.7, 1.570796]
+    expected_height: 1.27
+
+# 1번: 지면 평면 (ground_plane_node). 실내는 옆 벽·책상을 빼려고 방위를 좁힌다.
+ground:
+  num_frames: 20
+  range_max: 3.5
+  azimuth_min: 130.0
+  azimuth_max: -130.0
+  min_inlier_percent: 70.0
+  max_sigma_mm: 20.0
+
+# 2번: 원통 검출 (pointcloud_target_node). 작은 원기둥(높이 50 cm, 지름 10 cm) 기준.
+# band_above_floor: 바닥에서 이 높이 구간의 점만 쓴다 — 1번의 z 로 센서 기준 box 를 만든다.
+# target_size: GUI 의 "지름 (cm) / 높이 (m)" 칸 기본값. 칸을 바꾸고 [자동 계산] 을 누르면
+# 아래 radius / band / max_extent / max_fit_residual 이 그 크기에 맞게 다시 채워진다.
+target_size: [10, 0.5]
+target:
+  radius: 0.05
+  band_above_floor: [0.10, 0.42]
+  range_min: 1.0
+  range_max: 3.6        # 4.0 이면 케이지 서쪽 그물 쪽 물체(3.97 m)가 걸렸다 (2026-11-03)
+  azimuth_min: 100.0
+  azimuth_max: -100.0
+  cluster_tolerance: 0.12
+  cluster_min_points: 5
+  cluster_max_extent: 0.4
+  max_fit_residual: 0.03
+  capture_sample_count: 10
