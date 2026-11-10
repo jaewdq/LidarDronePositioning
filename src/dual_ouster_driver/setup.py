@@ -35,15 +35,7 @@ setup(
                 package_name,
                 'config'
             ),
-            glob('config/*.yaml')
-        ),
-        (
-            os.path.join(
-                'share',
-                package_name,
-                'rviz'
-            ),
-            glob('rviz/*.rviz')
+            glob('config/*.xml')
         ),
     ],
 
@@ -51,20 +43,13 @@ setup(
         'setuptools'
     ],
 
-    entry_points={
-        'console_scripts': [
-            'axis_probe = dual_ouster_driver.axis_probe:main',
-            'room_survey = dual_ouster_driver.room_survey:main',
-            'tilt_check = dual_ouster_driver.tilt_check:main',
-        ],
-    },
 
     zip_safe=True,
 
     maintainer='drone',
     maintainer_email='drone@example.com',
 
-    description='Dual Ouster OS1-128 driver launch',
+    description='Two Ouster LiDARs (OS0-SR) with PTP time and phase lock',
 
     license='Apache-2.0',
 )

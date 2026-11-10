@@ -10,9 +10,9 @@
   <depend>rclpy</depend>
   <depend>sensor_msgs</depend>
   <depend>geometry_msgs</depend>
+  <depend>nav_msgs</depend>
   <depend>visualization_msgs</depend>
   <depend>std_msgs</depend>
-  <depend>px4_msgs</depend>
 
   <!-- Python dependencies installed via pip:
        pip3 install open3d scipy

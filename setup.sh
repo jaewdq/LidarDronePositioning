@@ -151,6 +151,8 @@ APT_PKGS=(
     ros-humble-tf2-eigen ros-humble-cv-bridge
     # 우리 코드 (과학 패키지는 apt 말고 pip 로. 아래 주석 참고)
     ros-humble-rviz2 python3-yaml
+    # PTP (PC 가 기준 시계)
+    linuxptp
     # mDNS 로 라이다 찾기 (IP 모를 때)
     avahi-utils
     # 여러 터미널 띄우기 편하게
@@ -218,17 +220,20 @@ mkdir -p "$WS/src"
 c_ok "$WS/src"
 
 # 우리 패키지는 저장소를 심볼릭 링크한다. 저장소에서 코드를 고치면 바로 반영된다.
-if [ -e "$WS/src/dual_ouster_driver" ]; then
-    if [ -L "$WS/src/dual_ouster_driver" ]; then
-        c_skip "dual_ouster_driver 링크 이미 있음"
+OUR_PKGS=(dual_ouster_driver drone_localization grid_sensor_calibration)
+for pkg in "${OUR_PKGS[@]}"; do
+    if [ -e "$WS/src/$pkg" ]; then
+        if [ -L "$WS/src/$pkg" ]; then
+            c_skip "$pkg 링크 이미 있음"
+        else
+            c_warn "$WS/src/$pkg 가 실제 폴더입니다 (링크 아님)."
+            c_warn "저장소 사본과 별개로 관리됩니다. 그대로 두겠습니다."
+        fi
     else
-        c_warn "$WS/src/dual_ouster_driver 가 실제 폴더입니다 (링크 아님)."
-        c_warn "저장소 사본과 별개로 관리됩니다. 그대로 두겠습니다."
+        ln -s "$REPO/src/$pkg" "$WS/src/$pkg"
+        c_ok "$pkg -> $REPO/src/$pkg (링크)"
     fi
-else
-    ln -s "$REPO/src/dual_ouster_driver" "$WS/src/dual_ouster_driver"
-    c_ok "dual_ouster_driver -> $REPO/src/dual_ouster_driver (링크)"
-fi
+done
 
 # ================================================================ 4. ouster-ros
 step 4/8 "ouster-ros 받기 + 패치"
@@ -292,7 +297,7 @@ rosdep install --from-paths src --ignore-src -y --rosdistro humble >/dev/null 2>
 # 워크스페이스 전체가 아니라 필요한 것만 빌드한다. 기존 워크스페이스에
 # 다른 패키지가 있을 때 그쪽 빌드 실패에 말려들지 않게.
 echo "  colcon build (처음이면 10~20분)..."
-if colcon build --symlink-install --packages-up-to ouster_ros dual_ouster_driver; then
+if colcon build --symlink-install --packages-up-to ouster_ros "${OUR_PKGS[@]}"; then
     c_ok "빌드"
 else
     c_err "빌드 실패. 위 로그를 보세요."
@@ -392,18 +397,14 @@ cat <<EOF
 
   새 터미널을 열고 (또는 source ~/.bashrc):
 
-    ros2 launch dual_ouster_driver dual_os1.launch.py
-    ros2 topic hz /lidar1/points          # 10 근처면 정상
+    sudo ptp4l -f $REPO/ptp_gm.conf -i <라이다 랜카드> -m     # 터미널 1
+    ros2 launch dual_ouster_driver dual_lidar.launch.py          # 터미널 2
+    ros2 topic hz /lidar1/points                                 # 10 근처면 정상
 
-  그다음 보정을 해야 합니다. 보정값은 설치 장소마다 다릅니다.
+  그다음 캘리브레이션 (센서를 옮길 때마다):
 
-    ros2 run dual_ouster_driver calibrate --ros-args \\
-      -p lidar_ids:="[1,2]" -p front_axis:=+y -p marker_radius:=0.045 -p countdown:=10
+    ros2 run grid_sensor_calibration calibration_gui
 
-  자세한 것은 문서를 보세요.
-
-    docs/PIPELINE.md      전체 흐름과 미해결 문제
-    docs/CALIBRATION.md   보정 원리
-    docs/RUN.md           명령어 모음
+  운용 절차는 README.md 를 보세요.
 
 EOF

@@ -14,21 +14,17 @@ setup(
         ('share/' + package_name, ['package.xml']),
         (os.path.join('share', package_name, 'params'),
             glob('params/*.yaml')),
-        (os.path.join('share', package_name, 'launch'),
-            glob('launch/*.launch.py')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
     maintainer='jaeyup',
     maintainer_email='jaeyup01@naver.com',
-    description='LiDAR-based drone 3D localization (outside-in, EKF)',
+    description='Two ground LiDARs -> UAV position: PF / MF / SU fusion, constant-velocity KF, offline replay',
     license='Apache-2.0',
     entry_points={
         'console_scripts': [
             'lidar_drone_tracker = drone_localization.lidar_drone_tracker:main',
-            'analyze_waypoints = drone_localization.analyze_waypoints:main',
-            'plot_run = drone_localization.plot_run:main',
-            'run_report = drone_localization.run_report:main',
+            'replay_bag = drone_localization.replay_bag:main',
         ],
     },
 )

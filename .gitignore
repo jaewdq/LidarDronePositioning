@@ -17,3 +17,9 @@ src/dual_ouster_driver/config/calibration_lidar*.yaml
 # 비행 기록
 flights/
 *.db3
+
+# apply_calibration / calibration_gui 가 트래커 YAML 옆에 남기는 백업
+*.bak
+
+# 테스트 캐시
+.pytest_cache/

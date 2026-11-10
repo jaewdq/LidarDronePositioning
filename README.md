@@ -1,529 +1,184 @@
-# 라이다 드론 측위 시스템
+# 실내 LiDAR UAV 추적 — 운용 매뉴얼 (Ouster OS0-SR × 2)
 
-Ouster OS1-128 라이다로 **밖에서 드론 위치를 재는** 시스템.
-드론에 아무것도 안 달고, 지상 라이다만으로 3차원 위치를 뽑는다.
-
-제24회 한국로봇항공기경연대회(중급부) 준비용.
-
-```
-Ubuntu 22.04 + ROS 2 Humble 만 있는 PC  ->  이 저장소  ->  같은 시스템
-```
-
----
-
-## 이게 뭘 하나
-
-```
-라이다가 방을 통째로 스캔  ->  관심 영역만 남기고  ->  움직이는 덩어리를 찾아
-->  그 중심 좌표를 10Hz 로 기록  ->  비행 궤적 그림과 통계
-```
-
-라이다 2대를 **마주 보게** 놓는다. 한 대로는 두 가지가 원리적으로 안 되기 때문이다.
-
-- **머리 위 사각 원뿔** — 수직 시야가 ±21.46도라 라이다 바로 위는 못 본다.
-  실측 비행에서 드론이 라이다 위를 지나가며 **4.4초를 통째로 놓쳤다.**
-- **surface bias** — 라이다는 물체의 자기 쪽 면만 본다. 중심이 반지름만큼
-  라이다 쪽으로 치우친다.
-
-마주 보게 놓으면 한쪽 사각 원뿔을 다른 쪽이 메우고, 치우침이 서로 반대라 상쇄된다.
-
-### 실측 성능 (2026-08-24, 실내 4x4 m)
-
-| 항목 | 값 |
-|---|---|
-| 갱신율 | 10.01 Hz (라이다 2대 동시) |
-| 두 라이다 좌표계 일치도 | **8 mm** |
-| 보정 yaw 정확도 | 0.086도 / 0.110도 |
-| 지연 | 203~217 ms |
-| 검출 한계 | 텔로(10x9x4cm) 약 5~6 m |
-
-> 검출 한계는 **물체가 얼마나 꽉 찼는지**로 결정된다. 외곽 크기가 아니다.
-> 쿼드콥터는 프레임·모터뿐이라 빔을 막는 면적이 외곽의 15~30% 밖에 안 된다.
-> 실제 기체로는 아직 재보지 않았다.
-
----
-
-## 빠른 시작
-
-```bash
-git clone https://github.com/jaewdq/LidarDronePositioning.git
-cd LidarDronePositioning
-./setup.sh
-```
-
-스크립트가 묻는 것은 네 가지뿐이다.
-
-```
-워크스페이스 경로          [~/ros2_ws]
-라이다를 연결할 인터페이스  [enp59s0]      <- 자동 감지해서 목록으로 보여준다
-PC 에 줄 고정 IP           [192.168.6.100/24]
-라이다 IP                  [192.168.6.11 / .12]
-```
-
-끝나면 새 터미널에서:
-
-```bash
-ros2 launch dual_ouster_driver dual_os1.launch.py
-ros2 topic hz /lidar1/points          # 10 근처면 정상
-```
-
-**그다음 반드시 보정을 해야 한다** (아래 4장). 보정값은 설치 장소마다 다르다.
-
----
-
-## 1. 준비물
-
-### 하드웨어
-
-| | 비고 |
-|---|---|
-| Ouster OS1-128 x2 | `OS1-070-128U-AX` 와 `ASR` 을 섞어 써도 된다. 수직 시야가 같다 |
-| 인터커넥터 박스 x2 | 라이다마다 하나. 24V 전원 |
-| **기가비트** 스위치 | 2대면 40 MB/s. 100Mbps 로는 부족하다 |
-| 랜선 3개 | 라이다2 + PC |
-| 삼각대/마운트 x2 | **수평 조절이 되는 것.** 기울면 z 가 거리에 비례해 틀어진다 |
-| 원기둥 마커 1개 | 보정용. 지름 9cm, 높이 30cm 이상 (페트병, 지관 등) |
-| 줄자, 수평계 | 수평계는 스마트폰 앱도 된다 |
-
-### 소프트웨어
+## 전제조건
 
 - Ubuntu 22.04
-- ROS 2 Humble (`ros-humble-desktop`)
+- ROS 2 Humble (ros-humble-desktop) — 설치: https://docs.ros.org/en/humble/Installation.html
+- 나머지(의존성, Ouster 드라이버, PTP, 우리 패키지 빌드, 네트워크 설정)는 setup.sh 가 한다.
 
-나머지는 `setup.sh` 가 깐다.
+※ 아래 경로는 예시다
+
+- 워크스페이스: `~/ros2_ws` (setup.sh 가 물어볼 때 바꿀 수 있음)
+- 저장소: `~/drone_project/LidarDronePositioning`
+- 라이다 랜카드: `eno1` (PC 마다 다름, `ip -br addr` 로 확인)
+- 경로를 바꿨으면 아래 명령의 경로도 같이 바꾼다.
 
 ---
 
-## 2. 네트워크 — 어떻게 연결하나
+## 0. 설치 (처음 한 번)
 
-### 2.1 개념: 라우터도 DHCP 도 없다
+### 0-1. 저장소, 설치 스크립트
 
-**라이다는 자기 IP 를 스스로 기억한다.** 공유기가 나눠주는 게 아니다.
-센서 안에 주소가 저장돼 있고 전원을 넣으면 그대로 뜬다.
-
-**PC 는 유선 랜카드에 같은 대역 주소를 직접 박아둔다.**
-
-```
-    PC  192.168.6.100/24  ──[스위치]──  라이다1  192.168.6.11/24
-         (enp59s0)              └─────  라이다2  192.168.6.12/24
-
-    같은 192.168.6.0/24  ->  라우터 없이 직접 통신
-```
-
-`/24` 는 앞 세 자리(`192.168.6.`)가 같으면 같은 동네라는 뜻이다. 같은 동네면
-게이트웨이를 거치지 않고 바로 패킷이 오간다. **공유기도 DHCP 서버도 필요 없다.**
-
-> **게이트웨이를 설정하면 안 된다.** 설정하면 PC 의 인터넷 기본 경로를 가로챈다.
-> `setup.sh` 는 `ipv4.gateway` 를 비워둔다.
-
-주소 대역(`192.168.6.x`)은 임의로 고른 것이다. 두 조건만 지키면 된다.
-
-1. PC 와 라이다가 **같은 대역**
-2. **와이파이 대역과 안 겹칠 것** — 겹치면 커널이 어느 쪽으로 보낼지 헷갈린다
+- Ouster 드라이버는 공식 ouster-ros(ros2 브랜치)를 쓴다: https://github.com/ouster-lidar/ouster-ros
+- setup.sh 가 받아서 커밋을 고정하고 패치까지 적용한다.
 
 ```bash
-ip -br addr show          # 와이파이가 무슨 대역을 쓰는지 확인
+git clone https://github.com/jaewdq/LidarDronePositioning.git ~/drone_project/LidarDronePositioning
+cd ~/drone_project/LidarDronePositioning && ./setup.sh
 ```
 
-### 2.2 배선
+- 묻는 것: 워크스페이스, 라이다 랜카드, PC IP(192.168.6.100/24), 라이다 IP(.11 / .12)
+- 하는 것: 의존성·linuxptp 설치, ouster-ros 와 우리 패키지 3개(드라이버, 트래커, 캘리브레이션) 빌드, 네트워크 프로필(ouster), `~/.bashrc` 3줄 추가 (ROS, 워크스페이스, 대용량 점군용 DDS 설정)
+- 끝나면 새 터미널을 연다.
 
-```
-   라이다 ──(전용 케이블)── 인터커넥터 ──(랜선)──┐
-                                 └ 24V 전원      ├─ 스위치 ─(랜선)─ PC
-   라이다 ──(전용 케이블)── 인터커넥터 ──(랜선)──┘
-                                 └ 24V 전원
-```
+### 0-2. 센서 IP (새 센서일 때만)
 
-라이다 한 대면 스위치 없이 PC 직결도 된다. 요즘 랜카드는 Auto-MDIX 라
-크로스 케이블도 필요 없다.
-
-### 2.3 PC 쪽 — setup.sh 가 한다
-
-NetworkManager 에 `ouster` 프로파일을 만들어 유선 랜카드에 고정 IP 를 준다.
-랜선을 꽂으면 자동으로 올라온다.
+- 두 센서가 같은 IP 로 출하되기도 한다. 이때는 IPv6 링크로컬로 붙어서 바꾼다.
 
 ```bash
-# setup.sh 가 하는 일 (수동으로 할 때)
-nmcli con add type ethernet ifname enp59s0 con-name ouster \
-  ipv4.method manual ipv4.addresses 192.168.6.100/24 \
-  ipv6.method auto autoconnect yes
+avahi-browse -art | grep -iA3 ouster          # 시리얼, IPv6 주소 확인
+curl -s -g -X PUT "http://[<IPv6>%eno1]/api/v1/system/network/ipv4/override" \
+  -H 'Content-Type: application/json' -d '"192.168.6.12/24"'
 ```
 
-### 2.4 라이다 쪽 — 센서에 저장된 IP
+- 바꾸기 전에 시리얼을 확인한다. LiDAR1 = .11, LiDAR2 = .12
 
-센서 IP 는 센서가 기억하므로 **PC 를 바꿔도 유지된다.** 바꿀 일이 있을 때만
-건드리면 된다.
+---
 
-```bash
-curl -s http://192.168.6.11/api/v1/system/network | python3 -m json.tool
-#   "override": "192.168.6.11/24"      <- 저장된 고정 주소
-```
+## 개념
 
-> **두 센서가 같은 IP 로 출하되는 경우가 있다.** 실제로 둘 다 `192.168.6.11`
-> 이어서 서브넷을 훑어도 한 대만 잡혔고, 라이다2 를 `.12` 로 바꿔야 했다.
-> IPv4 가 겹쳐도 IPv6 링크로컬은 MAC 기반이라 고유하므로 그쪽으로 붙어서
-> 고친다. 방법은 [docs/DUAL_LIDAR.md](docs/DUAL_LIDAR.md) 2.1 에 있다.
+### PTP
 
-### 2.5 10 Hz 가 나오게 하기 — DDS 프로파일
+- PC 가 기준 시계(grandmaster), 라이다 2대가 PC 를 따라간다. 오차 약 2 µs.
+- 점군 시각 = 센서가 PTP 시계로 잰 스캔 시작 시각 (`TIME_FROM_PTP_1588`).
+- ptp4l 이 꺼지면 센서가 기준을 잃는다. 추적 내내 켜 둔다.
 
-**이걸 빠뜨리면 데이터는 오는데 초당 프레임이 무너진다.** 설정 자체는
-`setup.sh` 가 하지만, 왜 필요한지는 알아둘 필요가 있다.
+### 위상 고정 (phase lock)
 
-포인트클라우드 한 프레임이 약 **2 MB** 다. Fast DDS 는 기본 공유메모리 공간이
-작아서 이걸 못 담고 UDP 로 우회하는데, 2 MB 는 **약 1400조각**으로 쪼개지고
-**조각 하나만 잃어도 프레임 전체가 버려진다.**
+- PTP 는 시계만 맞추고 회전은 맞추지 않는다.
+- 위상 고정을 켜면 두 센서가 매 0.1 s 정각에 같은 방위를 지난다. 스캔 시작이 0.5 ms 안으로 맞는다.
+- 드라이버 launch 에 기본으로 켜져 있다 (`phase_lock:=true`, offset 0, 1024x10).
+- 마주 본 두 센서는 필드 가운데를 동시에 지나고, 양 끝에서는 최대 약 23 ms 차이가 난다.
 
-`config/fastdds_large.xml` 이 공유메모리 공간을 64 MB 로 키워 조각내기 자체를
-없앤다. 환경변수로 지정한다.
+### 융합 방식
 
-```bash
-export FASTRTPS_DEFAULT_PROFILES_FILE=<저장소>/src/dual_ouster_driver/config/fastdds_large.xml
-```
+- PF (점군 융합): 두 점군을 합친 뒤 군집을 한 번 찾는다.
+- MF (관측 융합): 센서마다 위치를 찾고, 불확실성 가중으로 합쳐 KF 를 한 번 갱신한다. **운용 기본값.**
+- SU (순차 갱신): 센서마다 찾은 위치로 KF 를 차례로 두 번 갱신한다.
 
-실측 차이:
+---
 
-| | 없을 때 | 있을 때 |
+## 1. 전원, 연결
+
+- 라이다 인터페이스 박스에 전원을 넣는다.
+- 랜선은 스위치를 거쳐 PC 라이다 랜카드(eno1)에 연결한다.
+
+## 2. 배치
+
+- 삼각대 2대를 필드 긴 변 바깥에 마주 보게 둔다. 높이 약 1.25 m. (현재 LiDAR1 (1.35, −1.34), LiDAR2 (1.38, 3.05))
+- 각 라이다의 −x 방향(커넥터 반대쪽)이 필드와 상대 센서를 향하게 한다.
+- 경사계로 수평을 맞춘다. 남은 기울기는 3단계 지면 보정이 잡는다.
+
+## 터미널 구성
+
+| 터미널 | 내용 | 비고 |
 |---|---|---|
-| 1 대 | 3.5 Hz | 10.0 Hz |
-| **2 대** | **2.0 / 1.4 Hz** | **10.01 / 10.01 Hz** |
+| T1 | PTP | 끝까지 켜 둔다 |
+| T2 | 드라이버 | 끝까지 켜 둔다 |
+| T3 | 캘리브레이션 GUI → 추적 GUI | 하나씩 |
+| T4 | 확인 (topic hz, RViz) | 필요할 때 |
 
-**2대에서 훨씬 심하다.** 40 MB/s 라서.
+- 끌 때는 역순(T3 → T2 → T1)으로 Ctrl+C.
 
-```bash
-echo $FASTRTPS_DEFAULT_PROFILES_FILE     # 비어 있으면 이게 원인
-source ~/.bashrc
-```
-
-> **BEST_EFFORT 와 혼동하지 말 것.** 이건 다른 문제다.
-> 드라이버는 포인트클라우드를 BEST_EFFORT 로 발행한다(느린 구독자 때문에
-> 센서가 밀리면 안 되므로). 그래서 RELIABLE 로 구독하면 **연결 자체가 안 되고
-> 아무 경고도 없다.** `ros2 topic hz` 가 아무것도 안 보여줄 때 이걸 의심한다.
-> Hz 가 낮은 것과는 원인이 다르다 — 위 프로파일 문제다.
-
----
-
-## 3. 확인 사다리 — 안 될 때 이 순서로
-
-각 단계가 다른 종류의 고장을 잡아낸다. **위에서부터** 짚는다.
-
-**① 물리 링크**
+T1 — PTP
 
 ```bash
-cat /sys/class/net/enp59s0/carrier      # 1 = 링크 있음
+cd ~/drone_project/LidarDronePositioning && sudo ptp4l -f ptp_gm.conf -i eno1 -m
+# "assuming the grand master role" 이면 정상
 ```
 
-`0` 이면 여기서 멈춘다. 랜선·스위치 전원·인터커넥터 전원을 본다.
-**ROS 는 볼 필요도 없다.**
-
-**② PC 주소**
+T2 — 드라이버 (위상 고정 기본 켬)
 
 ```bash
-ip -br addr show enp59s0                # 192.168.6.100/24
-nmcli con up ouster                     # 주소가 없으면
+cd ~ && ros2 launch dual_ouster_driver dual_lidar.launch.py
 ```
 
-**③ L2 도달**
+T4 — 확인
 
 ```bash
-ping -c2 192.168.6.11
-ip neigh show dev enp59s0               # lladdr 이 보이면 L2 는 붙은 것
-```
-
-**④ 센서가 살아있나**
-
-```bash
-curl -s http://192.168.6.11/api/v1/sensor/metadata/sensor_info
-# "status": "RUNNING" 이어야 함
-```
-
-**⑤ UDP 목적지 — 제일 찾기 어려운 고장**
-
-```bash
-curl -s http://192.168.6.11/api/v1/sensor/config | grep udp_dest
-# "udp_dest": "192.168.6.100"      <- PC 주소여야 정상
-```
-
-`169.254.x.x` 로 되어 있으면 **데이터가 허공으로 간다.** 핑도 되고 HTTP 도
-되는데 토픽만 안 오는 상태가 된다. 런치 파일이 `udp_dest` 를 명시하므로
-드라이버를 다시 띄우면 고쳐진다.
-
-**⑥ 실제 데이터**
-
-```bash
-ros2 topic hz /lidar1/points            # 10 근처
-```
-
-**1~4 로 나오면** DDS 프로파일 누락 (2.5 참고).
-**아무것도 안 나오면** 구독 QoS 문제이거나 토픽이 없는 것이다.
-
----
-
-## 4. 보정 — 설치할 때마다 해야 한다
-
-**보정값은 라이다 위치·자세·설치 장소마다 전부 다르다.** 저장소에는 예시
-(`*.yaml.example`)만 들어 있고, 실제 값은 현장에서 만들어야 한다.
-남의 보정값을 쓰면 **오류 없이 조용히 틀린 좌표**가 나온다.
-
-### 4.1 먼저 수평을 맞춘다
-
-```bash
-ros2 run dual_ouster_driver tilt_check
-```
-
-2초마다 갱신된다. 마운트를 돌리면서 본다.
-
-```
-  라이다1  0.18도 OK  (방위 -32 잔차 7.5mm)   |   라이다2  0.25도 ..  (방위+127 잔차 8.0mm)
-```
-
-**0.2도 아래면 충분하다.** 잔차가 15mm 넘으면 바닥이 평평하지 않은 것이니
-다른 자리에서 다시 잰다.
-
-기울면 **z 가 거리에 비례해 틀어진다** (x, y 는 거의 영향 없다).
-
-| 기울기 | 4 m | 10 m | 20 m |
-|---|---|---|---|
-| 1.0도 | 7.0 cm | 17.5 cm | 34.9 cm |
-| 0.2도 | 1.4 cm | 3.5 cm | 7.0 cm |
-
-### 4.2 마커를 준비한다
-
-원기둥이면 된다. **지름을 줄자로 재서** 반지름(÷2)을 넣는다.
-
-```
-지름  9 cm  ->  -p marker_radius:=0.045
-지름 10 cm  ->  -p marker_radius:=0.05
-```
-
-
-높이는 **30cm 이상**이 좋다. 낮으면 바닥 컷에 대부분이 잘려나가 멀리 못 놓는다.
-
-### 4.3 보정 실행
-
-```bash
-ros2 run dual_ouster_driver calibrate --ros-args \
-  -p lidar_ids:="[1,2]" -p front_axis:=+y -p marker_radius:=0.045 -p countdown:=10
-```
-
-```
-[1/4] 정면   주변 비우고 Enter -> Enter 후 10초 안에 라이다1 앞 1m 에 서기
-[2/4] 높이   두 대 자동
-[3/4] M1     마커를 원점 삼을 자리에 놓고 -> 좌표 입력 (예: 2.6 0)
-[4/4] M2     마커를 옮기고 -> 좌표 입력 (예: 1.5 -1.8)
-```
-
-좌표 입력 형식은 **"정면거리 좌우거리"**, 왼쪽 +, 오른쪽 −.
-
-**지킬 것**
-
-- 두 라이다 **모두에서 2m 이상** 떨어진 자리에 놓는다 (가까우면 수직 시야 밖)
-- M1↔M2 는 **멀수록 정확하다.** 최소 2m, 가능하면 3m 이상
-- **M1·M2 측정 사이에 마커 말고 아무것도 움직이면 안 된다**
-  (라이다2 가 "움직인 물체 = 마커" 로 자동 판별한다)
-
-### 4.4 결과 확인
-
-```
-[교차검증] 각 라이다가 잰 M1-M2 간격
-  라이다1 2.353 m   라이다2 2.363 m
-  최대 차이 10.0 mm   두 라이다가 같은 것을 보고 있습니다.
-```
-
-**20mm 이내면 좋다.** 50mm 넘으면 다른 물체를 골랐거나 마커가 움직인 것이다.
-
-두 라이다 사이 거리도 출력하니 줄자로 맞춰본다.
-
-### 4.5 눈으로 겹침 확인
-
-```bash
-ros2 launch dual_ouster_driver dual_view.launch.py z_min:=0.05
-```
-
-물체를 하나 놓고 **빨강(라이다1)과 파랑(라이다2)이 겹치는지** 본다.
-
-> **완전히 겹치지는 않는다.** 각자 자기 쪽 면만 보므로 물체 지름만큼 벌어진다.
-> 이게 정상이고, 두 중점이 물체의 진짜 중심이다.
->
-> 판정은 두 중심 차이를 **두 성분으로 나눠서** 한다.
-> - 두 라이다를 잇는 **축 방향** = surface bias. 물체 두께만큼이면 정상
-> - 그 축에 **수직인 방향** = 좌표계 불일치. **이게 진짜 오차** (실측 8mm)
-
----
-
-## 5. 비행 기록과 분석
-
-```bash
-ros2 launch dual_ouster_driver record_flight.launch.py label:=run1
-```
-
-비행 후 **Ctrl+C** 하면 분석 명령이 경로까지 채워져 출력된다.
-
-```bash
-ros2 run dual_ouster_driver flight_report --ros-args -p run_dir:=~/flights/flight_xxx
-xdg-open ~/flights/flight_xxx/flight_3d.html
-```
-
-나오는 것:
-
-| 파일 | 내용 |
-|---|---|
-| `track.csv` | 프레임마다 원본(median) + 칼만 위치·속도 |
-| `report.txt` | 끊긴 구간, 이동 범위, 속도 통계, 호버 구간 |
-| `flight_3d.html` | 3D 궤적 (마우스로 돌려볼 수 있음) |
-| `flight_2d.png` | 평면도 / 고도 / 속도 |
-| `bag_*` | rosbag. 파라미터 바꿔 다시 분석하려면 이게 필요하다 |
-
-> **현재 한계: 라이다 한 대 결과만 기록된다.** 두 스트림을 합치는 코드가 아직
-> 없다. [docs/PIPELINE.md](docs/PIPELINE.md) 8.1 참고.
-
----
-
-## 6. 저장소 구성
-
-```
-├─ setup.sh                     설치 (여러 번 돌려도 안전)
-├─ patches/
-│   └─ 0001-window-field-guard.patch    ouster-ros 버그 수정
-├─ src/dual_ouster_driver/      우리 코드
-│   ├─ dual_ouster_driver/      노드 11개
-│   ├─ launch/                  런치 3개
-│   ├─ rviz/                    RViz 설정 3개
-│   └─ config/
-│       ├─ fastdds_large.xml               DDS 프로파일 (필수)
-│       └─ calibration_lidarN.yaml.example 보정값 예시
-└─ docs/
-    ├─ PIPELINE.md              전체 흐름 + 미해결 문제  <- 먼저 읽을 것
-    ├─ CALIBRATION.md           보정 계산 원리
-    ├─ DUAL_LIDAR.md            2대 구성에서 새로 한 것
-    ├─ LIDAR_SETUP.md           설치 상세
-    └─ RUN.md                   명령어 모음
-```
-
-### 노드
-
-| 이름 | 역할 |
-|---|---|
-| `roi_filter` | 보정값 적용 + 관심 영역 크롭 |
-| `cluster_median` | DBSCAN + median 으로 위치 하나 |
-| `calibrate` | 보정 (1대/여러 대) |
-| `flight_recorder` | 칼만필터 + CSV 기록 |
-| `flight_report` | 분석·그림 |
-| `tilt_check` | 수평 실시간 확인 |
-| `verify_pose` | 줄자 대비 검증 |
-
-### `ouster-ros` 를 왜 패치하나
-
-FW 3.2 미만 센서는 `WINDOW` 필드를 안 보내는데 상위 코드가 무조건 읽어서
-`Field 'WINDOW' not found in LidarScan` 으로 죽는다. **업스트림 버그다.**
-
-`setup.sh` 가 커밋 `aef1a24` 로 고정한 뒤 패치를 얹는다. 업스트림이 바뀌어도
-같은 결과가 나온다.
-
----
-
-## 7. 자주 겪는 문제
-
-| 증상 | 원인 | 해결 |
-|---|---|---|
-| `carrier=0` | 랜선/전원 | 물리 연결 확인. **가장 흔하다** |
-| 스캔에 라이다가 한 대만 | 두 센서 IP 충돌 | 3장 mDNS 방법 |
-| 핑은 되는데 토픽이 없음 | `udp_dest` 가 링크로컬 | 드라이버 재시작 (4장 ⑤) |
-| `topic hz` 가 1~4 | DDS 프로파일 누락 | `echo $FASTRTPS_DEFAULT_PROFILES_FILE` |
-| `TRANSITION_CONFIGURE` 실패 | **드라이버 중복 실행** | `ros2 node list` 확인 후 둘 다 끄고 하나만 |
-| 드라이버가 CPU 0% 로 멈춤 | 라이프사이클 전이 안 됨 | 런치 파일을 써야 한다 (`ros2 run` 안 됨) |
-| `Field 'WINDOW' not found` | 패치 누락 | `setup.sh` 재실행 |
-| 좌표가 이상한데 오류는 없음 | **보정값이 안 실림** | 로그에서 `origin=(0.000, 0.000)` 경고 확인 |
-| 드론 대신 천장/사람을 잡음 | 추적 연관 없음 | ROI 를 좁힌다. 근본 해결은 미구현 |
-
-### 프로세스 정리할 때
-
-```bash
-# pkill -f roi_filter 는 쓰지 말 것.
-# 명령줄 자체가 패턴에 걸려 자기 자신도 죽인다.
-ps -eo pid,cmd | grep roi_filter | grep -v grep
-kill -INT <PID>
-
-# kill -9 후에는 ROS 그래프가 남는다
-ros2 daemon stop && rm -f /dev/shm/fastrtps_*
+ros2 topic hz /lidar1/points ; ros2 topic hz /lidar2/points      # 각각 약 10 Hz
+curl -s http://192.168.6.11/api/v1/time/ptp | python3 -m json.tool | grep port_state        # SLAVE
+curl -s http://192.168.6.11/api/v1/sensor/config | python3 -m json.tool | grep phase_lock    # true, 0
+# .12 도 같은 방법
 ```
 
 ---
 
-## 8. 실외 확장 — 예정
+## 3. 캘리브레이션 (T3, 센서를 옮길 때마다)
 
-지금까지 실측한 것은 **실내 4 x 4 m** 다. 경기장은 **24 x 15 m** 로 면적이 22배다.
-아직 실외에서 돌려본 적이 없고, 아래 배치로 실험할 예정이다.
-
-### 예상 배치
-
-```
-                        라이다2 (12, 17)
-                              ▼   (아래쪽을 봄)
-        ┌──────────────────────────────┐  y = 15
-        │                              │
-   15 m │           비행 영역           │
-        │                              │
-        └──────────────────────────────┘  y = 0
-                              ▲   (위쪽을 봄)
-                        라이다1 (12, −2)
-      x=0 └──────────── 24 m ────────────┘ x=24
-
-        경기장 밖으로 2 m 물러남,  두 라이다 간격 19 m,  높이 2 m
+```bash
+ros2 run grid_sensor_calibration calibration_gui
 ```
 
-- **긴 변의 정중앙(x=12)** — 격자로 계산해보니 x 를 벌리면 오히려 나빠진다.
-  경기장이 x 로 24 m 나 길어서 중앙에 있어야 양 끝까지가 최소가 된다.
-  이 배치에서 가장 먼 지점까지 **15.3 m** (긴 변 양 끝).
-- **경기장 밖 2 m** — 수직 사각 원뿔의 안쪽이 경기장 밖에서 소모된다.
-- **높이 2 m** — 밖에 있으므로 높은 쪽이 유리하다. 경기장 안에 둘 거라면
-  반대로 1.0~1.5 m 가 낫다 (원뿔이 통째로 비행 영역을 파먹으므로).
+1. 처음 화면: 센서 2개 선택, 메모 입력, [새 세션 만들기]
+    - 결과는 `~/grid_calibration/indoor_cage/<날짜>_rNN/` 에 쌓인다.
+2. [1. 지면 보정]: 센서 앞 바닥을 비우고 [측정 시작] → z, roll, pitch
+    - 합격 기준(inlier, σ)이 표로 나온다.
+3. [2. XY / yaw 보정]
+    - 설정: 점 4개 (0,0) (3,0) (0,1.5) (3,1.5), 원기둥 지름 10 cm × 높이 0.5 m → [검출 · 캡처 시작]
+    - 캡처: 원기둥을 각 점에 놓고 캡처한다. 흔들림이 크면 다시 찍는다.
+    - 4점 → [계산]. 목표 RMS 약 1.5 cm.
+4. [3. YAML 적용]: `lidar_localization_os0_indoor.yaml` 선택 → 미리보기 → [적용]
+    - 이전 yaml 은 백업이 자동으로 생긴다.
 
-### 실외에서 확인해야 할 것
+## 4. 캘리브레이션 확인 (RViz)
 
-거리가 4배로 늘면 표적에 맺히는 점이 **거리 제곱에 반비례**해 줄어든다.
-실내 파라미터를 그대로 쓰면 안 된다.
+- 캘리브레이션 GUI 를 끄고 실행한다.
 
-```
-[ ] 점 개수가 실제로 얼마나 나오는지  (실내 모델이 실외에서도 맞는지)
-[ ] eps 를 키워야 한다 — 점 간격보다 작으면 한 드론이 쪼개져 사라진다
-[ ] min_points 하향
-[ ] tilt_check 0.2도 아래   (24 m 에서 1도면 z 가 42 cm 틀어진다)
-[ ] 마커를 10 m 이상 벌려서 보정   (yaw 정확도가 간격에 반비례)
-[ ] 빈 경기장 배경 확인 — 사람·텐트·장비가 ROI 에 들어온다
-[ ] 게이팅 — 없으면 멀리 있는 드론보다 가까운 사람을 잡는다
+```bash
+ros2 launch ~/drone_project/LidarDronePositioning/tools/indoor_view/indoor_view.launch.py
 ```
 
-마지막 두 줄이 제일 걱정된다. 실내에서는 ROI 안에 드론밖에 없었지만
-실외는 그렇지 않다.
+- 두 센서 점군(빨강, 파랑)이 바닥, 벽에서 겹치면 정상이다. 필드 사각형, ROI 상자도 보인다.
+- 확인이 끝나면 Ctrl+C.
+
+## 5. 추적 운용 (T3)
+
+```bash
+python3 ~/drone_project/LidarDronePositioning/tools/indoor_view/uav_tracking_gui.py
+```
+
+1. ID, 회차 입력. 융합 방식은 MF 가 기본이다.
+2. [START RUN] → 비행 → [FINISH RUN]
+3. [화면 열기]: 실시간 RViz (필드, ROI, 궤적, 좌표)
+4. 결과: `~/drone_project/flight_logs/indoor_real/<ID>/runNN_MF_<시각>/`
+    - `estimated_pose.csv` (t_sec, x, y, z, vx, vy, vz) — 약 10 Hz, 1분에 약 30 KB
+    - `경로재생.sh` — 이 비행 재생
+    - `run.yaml`, yaml 사본, `tracker.log`
+
+- "원본 점군 녹화"는 성능 검증(모캡 비교) 때만 켠다. 1분에 2~3 GB.
 
 ---
 
-## 9. 알려진 한계
+## 6. 끝난 뒤 (오프라인)
 
-**두 라이다를 합치는 코드가 없다.** 각자 따로 위치를 낸다. 좌표계는 8mm 로
-잘 맞는 것이 확인됐지만, 합칠 노드가 없어서 2대의 이점을 못 쓰고 있다.
+### 경로 재생
 
-**추적 연관이 없다.** 매 프레임 "가장 큰 군집"을 고를 뿐이라 사람이나 천장으로
-갈아탄다. 실측 비행에서 68%가 천장이었다.
+- run 폴더의 `경로재생.sh` 우클릭 → [프로그램으로 실행] (Run as a Program)
+- 또는 추적 GUI 의 [경로 재생] (방금 비행, 없으면 폴더 선택)
+- 또는 터미널
 
-**기준값이 없다.** 지금 수치는 "라이다가 무엇을 봤는가"이지 "그게 맞는가"가
-아니다. 두 라이다 교차검증은 일관성이지 정확도가 아니다.
+```bash
+python3 ~/drone_project/LidarDronePositioning/tools/indoor_view/path_replay.py <run 폴더>
+```
 
-**지연 200ms 의 원인을 모른다.** 우리 코드 처리는 12~15ms 다. 기록용으로는
-타임스탬프가 정확해 문제없지만 실시간 제어에는 못 쓴다.
+- 재생 창: 재생 / 일시정지, 처음으로, 배속 0.25~4x, 시간 슬라이더, 지금 위치와 속력
+- RViz: 회색 = 전체 경로, 초록 = 지금까지, 점 + (x, y, z) + 시각
 
-전부 [docs/PIPELINE.md](docs/PIPELINE.md) 8장에 정리돼 있다.
+### PF / MF / SU 비교 재생 — rosbag 을 녹화했을 때만
 
----
-
-## 10. 다른 PC 로 옮길 때 빠뜨리기 쉬운 것
-
-`setup.sh` 가 처리하지만, 수동으로 할 때를 위해 적어둔다.
-
-| 위치 | 내용 |
-|---|---|
-| NetworkManager `ouster` 프로파일 | 유선 NIC 에 고정 IP. **인터페이스 이름이 PC 마다 다르다** |
-| `~/.bashrc` | ROS source 2줄 + `FASTRTPS_DEFAULT_PROFILES_FILE` |
-| `src/ouster-ros/.../point_cloud_compose.h` | 패치. **ouster-ros 재설치 시 날아간다** |
-| 센서 내부 | 각 센서의 `ipv4.override`. PC 를 바꿔도 유지된다 |
-| **보정값** | **저장소에 없다. 현장에서 다시 측정해야 한다** |
+```bash
+python3 -m drone_localization.replay_bag --bag <run 폴더>/bag --out <결과 폴더> --tracker cov \
+  --clock arrival --quiet --ros-args --params-file <yaml> -p fusion_mode:=cloud
+# MF = position, SU = sequential
+```

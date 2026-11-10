@@ -1,0 +1,64 @@
+# 비행·녹화용 가벼운 화면: 점군 없이 필드, ROI, 추적 위치(SU)·좌표·궤적만.
+# 캘리브레이션 확인(점군 겹침)은 indoor_view.rviz.
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+  - Class: rviz_common/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid (1 m)
+      Enabled: true
+      Cell Size: 1
+      Plane Cell Count: 8
+    - Class: rviz_default_plugins/Marker
+      Name: 필드 3x2
+      Enabled: true
+      Topic: {Value: /viz/field, Reliability Policy: Reliable}
+    - Class: rviz_default_plugins/Marker
+      Name: 트래커 ROI
+      Enabled: true
+      Topic: {Value: /viz/roi, Reliability Policy: Reliable}
+    - Class: rviz_default_plugins/MarkerArray
+      Name: 물체 좌표 (SU)
+      Enabled: true
+      Topic: {Value: /viz/positions, Reliability Policy: Reliable}
+    - Class: rviz_default_plugins/Path
+      Name: 추정 궤적
+      Enabled: true
+      Topic: {Value: /viz/track, Reliability Policy: Reliable}
+      Color: 0; 220; 120
+      Line Style: Billboards
+      Line Width: 0.03
+    - Class: rviz_default_plugins/Axes
+      Name: 원점 축 (x 빨강, y 초록, z 파랑)
+      Enabled: true
+      Reference Frame: map
+      Length: 0.4
+      Radius: 0.015
+  Tools:
+    - Class: rviz_default_plugins/Interact
+      Hide Inactive Objects: true
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/FocusCamera
+    - Class: rviz_default_plugins/Measure
+      Line color: 128; 128; 0
+  Global Options:
+    Fixed Frame: map
+    Background Color: 30; 30; 36
+    Frame Rate: 15
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 7.5
+      Focal Point:
+        X: 1.5
+        Y: 1.0
+        Z: 0.5
+      Pitch: 0.75
+      Yaw: -1.2
+Window Geometry:
+  Height: 900
+  Width: 1400

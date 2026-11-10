@@ -1,6 +1,30 @@
 #!/usr/bin/env python3
 """
-Final dual-Ouster OS1-128 drone tracker for a 24 m x 15 m competition field.
+Dual-Ouster drone tracker (ground-fixed LiDARs, outside-in).
+
+두 저장소가 같은 파일을 쓴다 — 고칠 때는 양쪽을 함께 맞출 것.
+  - jaewdq/LidarDronePositioning   src/drone_localization/.../lidar_drone_tracker.py   (실제 운용)
+  - jaewdq/DronePositioningSystem  ros2_ws/src/drone_localization/.../lidar_drone_tracker_cov.py (시뮬)
+
+융합 구조 (fusion_mode) — 논문 표기
+  cloud       PF 점군 융합   두 라이다 점을 합쳐 한 번에 클러스터링 → 관측 하나
+  position    MF 관측 융합   라이다별 클러스터 위치를 3x3 공분산으로 가중 평균 → 관측 하나
+  sequential  SU 순차 갱신   라이다별 관측을 촬영 시각 순서대로 KF에 차례로 넣음 (짝짓기 없음)
+  PF/MF는 process_on_arrival=true 로 짝 스캔이 도착하는 즉시 처리하는 것이 논문 조건이다.
+
+대회(2026-09, LidarDronePositioning 391f40a + 대회 당일 진단 기록)에서 바뀐 점
+  - SU 추가, process_on_arrival / max_sensor_range 옵션 추가
+  - 프로세스잡음: accel_noise_std(구간별 일정 가속도, dt^4/4) → process_noise_q
+    (연속 백색 가속도). 갱신 간격과 무관하게 초당 같은 불확실성이 쌓여 PF/MF/SU가
+    같은 운동 가정을 쓴다.
+  - 측정 공분산의 외재 캘리브 RMSE 항 → 스캔 나이 항(age_noise_velocity x 수신 후
+    경과시간). lidarN_extrinsic_rmse 는 이제 배경모델 서명에만 쓰인다.
+  - 짝짓기 정체 수정: 후보 쌍의 dt가 같으면 가장 최신 쌍을 고른다
+    (_select_unprocessed_pair, 시뮬에서 참값 대비 지연 0.18 s → 0.07 s).
+  - 첫 관측 전에는 홈 시드 위치를 발행하지 않는다.
+  - 대회 당일 추가한 라이다별 클러스터 점 수 기록(raw_detections.csv의
+    cluster_points_<라이다> 칸, 2초 상태 로그)은 그대로 두고 SU 행에도 채운다.
+  검증: 시뮬 bag 재생에서 PF/MF/SU 상태가 병합 전 시뮬 트래커와 비트 단위로 같다.
 
 Architecture
 ------------
@@ -90,6 +114,7 @@ import numpy as np
 import rclpy
 from builtin_interfaces.msg import Time as TimeMsg
 from geometry_msgs.msg import PoseWithCovarianceStamped
+from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from scipy.spatial import cKDTree
@@ -122,10 +147,10 @@ class Detection:
 class KF6D:
     """Constant-velocity KF with state [x,y,z,vx,vy,vz]."""
 
-    def __init__(self, accel_noise_std: float, default_meas_noise_std: float):
+    def __init__(self, process_noise_q: float, default_meas_noise_std: float):
         self.x = np.zeros(6, dtype=np.float64)
         self.P = np.eye(6, dtype=np.float64) * 9.0
-        self.accel_noise_std = float(accel_noise_std)
+        self.process_noise_q = float(process_noise_q)
         self.default_R = np.eye(3, dtype=np.float64) * float(default_meas_noise_std) ** 2
         self.H = np.zeros((3, 6), dtype=np.float64)
         self.H[0, 0] = self.H[1, 1] = self.H[2, 2] = 1.0
@@ -156,21 +181,17 @@ class KF6D:
         F[1, 4] = dt
         F[2, 5] = dt
 
-        # Physically consistent white-acceleration process-noise model.
-        q = self.accel_noise_std ** 2
-        q1 = np.array([
-            [0.25 * dt**4, 0.5 * dt**3],
-            [0.5 * dt**3, dt**2],
-        ], dtype=np.float64) * q
-        Q = np.zeros((6, 6), dtype=np.float64)
-        for p, v in ((0, 3), (1, 4), (2, 5)):
-            Q[p, p] = q1[0, 0]
-            Q[p, v] = q1[0, 1]
-            Q[v, p] = q1[1, 0]
-            Q[v, v] = q1[1, 1]
-
         self.x = F @ self.x
-        self.P = F @ self.P @ F.T + Q
+        self.P = F @ self.P @ F.T + self.process_noise(dt)
+
+    def process_noise(self, dt: float) -> np.ndarray:
+        # Continuous white-noise acceleration: the same uncertainty accumulates
+        # per second regardless of update interval, so PF/MF/SU share one
+        # motion assumption. The earlier dt⁴/4 form (piecewise-constant
+        # acceleration) accumulated less per second at higher update rates.
+        block = np.array([[dt**3 / 3.0, dt**2 / 2.0],
+                          [dt**2 / 2.0, dt]], dtype=np.float64)
+        return self.process_noise_q * np.kron(block, np.eye(3))
 
     def update(self, z: np.ndarray, R_meas: np.ndarray | None = None):
         if not self.initialized:
@@ -235,7 +256,7 @@ class LidarDroneTracker(Node):
         self._build_sensors()
 
         self._kf = KF6D(
-            accel_noise_std=self.accel_noise_std,
+            process_noise_q=self.process_noise_q,
             default_meas_noise_std=self.meas_noise_pos,
         )
         if self.seed_at_home:
@@ -257,6 +278,11 @@ class LidarDroneTracker(Node):
         # fusion_mode 'cloud' only: filtered per-sensor clouds of the current
         # frame, waiting to be concatenated and clustered together.
         self._merge_buffer = []
+
+        # 이번 사이클에 라이다별 클러스터가 몇 점이었나. 못 잡았으면 None.
+        # _fuse_detections 가 합산하며 버리는 값이라 여기 따로 붙잡아 둔다.
+        self._sensor_cluster_pts = [None, None]
+        self._last_cluster_label = None
 
         # Timestamped queues: each item = (stamp_sec, points_world, recv_time, stamp_msg)
         self._cloud_queues = [
@@ -331,6 +357,10 @@ class LidarDroneTracker(Node):
         # Final pose and per-sensor diagnostic outputs.
         self._pub_pose = self.create_publisher(
             PoseWithCovarianceStamped, '/drone/estimated_pose', reliable_qos)
+        # Position and KF velocity in one message (same stamp as /drone/estimated_pose),
+        # so a logger never has to pair two topics.
+        self._pub_odom = self.create_publisher(
+            Odometry, '/drone/estimated_odometry', reliable_qos)
         self._pub_sensor_pose = [
             self.create_publisher(
                 PoseWithCovarianceStamped, '/drone/lidar1_pose', reliable_qos),
@@ -406,14 +436,23 @@ class LidarDroneTracker(Node):
         self.declare_parameter('buffer_stale_timeout', 0.30)
         self.declare_parameter('queue_depth', 8)
         self.declare_parameter('sync_tolerance_sec', 0.010)
+        # >0: drop points farther than this from their sensor (emulates a dark
+        # target's shorter detection range on a recorded bag). 0 = off.
+        self.declare_parameter('max_sensor_range', 0.0)
+        # True (논문 조건): process a scan pair as soon as it arrives instead of
+        # waiting for the next timer tick; the timer then only flushes an
+        # unpaired scan. False waits up to one tick (0.1 s) -- PF/MF only.
+        self.declare_parameter('process_on_arrival', True)
 
-        # 'position' (default): cluster each sensor separately, then fuse
+        # 'sequential' (SU, default): filter each sensor's detection on its own,
+        #   in scan-time order, never paired. Lowest error in the paper runs.
+        # 'position' (MF): cluster each sensor separately, then fuse
         #   the two POSITIONS by covariance weight. Point clouds are never
         #   concatenated, so each detection keeps its own range and R.
-        # 'cloud': concatenate both filtered clouds and cluster once. Use
+        # 'cloud' (PF): concatenate both filtered clouds and cluster once. Use
         #   when the target is too sparse for either sensor alone -- see
         #   _detect_from_merged_cloud for what it gives up.
-        self.declare_parameter('fusion_mode', 'position')
+        self.declare_parameter('fusion_mode', 'sequential')
         self.declare_parameter('sync_stats_window', 200)
         self.declare_parameter('sensor_agreement_dist', 0.35)
 
@@ -461,11 +500,22 @@ class LidarDroneTracker(Node):
         self.declare_parameter('meas_noise_pos', 0.10)
         self.declare_parameter('centroid_noise_floor', 0.025)
         self.declare_parameter('range_noise_per_meter', 0.002)
+        # Age term: a detection describes where the drone was when the scan was
+        # taken, not where it is when the filter consumes it. The uncertainty
+        # that adds is not the elapsed time itself but the distance the target
+        # could have covered in it, so the age is scaled by a reference speed
+        # (default = the mission's horizontal cruise, 1.5 m/s). Age is measured
+        # on the monotonic clock (receive -> use), never by differencing header
+        # stamps against it -- see _coasting_stamp() for what mixing clock bases
+        # costs. This replaces the extrinsic-RMSE term: on an outdoor field a
+        # Kabsch/SVD calibration lands well inside the other terms, while
+        # staleness is the error source that actually moves.
+        self.declare_parameter('age_noise_velocity', 1.5)
         self.declare_parameter('min_detection_std', 0.03)
         self.declare_parameter('max_detection_std', 0.50)
 
         # KF / association.
-        self.declare_parameter('accel_noise_std', 2.0)
+        self.declare_parameter('process_noise_q', 0.4)
         self.declare_parameter('seed_at_home', True)
         self.declare_parameter('home_x', 0.0)
         self.declare_parameter('home_y', 0.0)
@@ -500,11 +550,16 @@ class LidarDroneTracker(Node):
         self.buffer_stale_timeout = float(gp('buffer_stale_timeout'))
         self.queue_depth = max(2, int(gp('queue_depth')))
         self.sync_tolerance = max(0.0, float(gp('sync_tolerance_sec')))
+        self._process_on_arrival = bool(gp('process_on_arrival'))
+        self._max_sensor_range = float(gp('max_sensor_range'))
         self.fusion_mode = str(gp('fusion_mode')).strip().lower()
-        if self.fusion_mode not in ('position', 'cloud'):
+        if self.fusion_mode not in ('position', 'cloud', 'sequential'):
             self.get_logger().warn(
-                f"unknown fusion_mode '{self.fusion_mode}'; using 'position'")
-            self.fusion_mode = 'position'
+                f"unknown fusion_mode '{self.fusion_mode}'; using 'sequential'")
+            self.fusion_mode = 'sequential'
+        # SU: every scan is filtered as soon as it arrives, never paired.
+        if self.fusion_mode == 'sequential':
+            self._process_on_arrival = True
         self.sync_stats_window = max(20, int(gp('sync_stats_window')))
         self.sensor_agreement_dist = float(gp('sensor_agreement_dist'))
         self.warn_nominal_extrinsics = bool(gp('warn_nominal_extrinsics'))
@@ -544,10 +599,11 @@ class LidarDroneTracker(Node):
         self.meas_noise_pos = float(gp('meas_noise_pos'))
         self.centroid_noise_floor = float(gp('centroid_noise_floor'))
         self.range_noise_per_meter = float(gp('range_noise_per_meter'))
+        self.age_noise_velocity = max(0.0, float(gp('age_noise_velocity')))
         self.min_detection_std = float(gp('min_detection_std'))
         self.max_detection_std = float(gp('max_detection_std'))
 
-        self.accel_noise_std = float(gp('accel_noise_std'))
+        self.process_noise_q = float(gp('process_noise_q'))
         self.seed_at_home = bool(gp('seed_at_home'))
         self.home_xyz = np.array(
             [gp('home_x'), gp('home_y'), gp('home_z')], dtype=np.float64)
@@ -728,11 +784,16 @@ class LidarDroneTracker(Node):
             self._raw_csv_path = output_dir / 'raw_detections.csv'
             self._raw_csv_f = open(self._raw_csv_path, 'w', newline='')
             self._raw_csv_w = csv.writer(self._raw_csv_f)
-            self._raw_csv_w.writerow([
+            raw_header = [
                 'time_s', 'x_m', 'y_m', 'z_m',
                 'cov_x', 'cov_y', 'cov_z',
                 'cluster_points', 'candidate_clusters',
-                'sensor_count', 'sync_dt_ms'])
+                'sensor_count', 'sync_dt_ms']
+            # 라이다별 클러스터 점 개수. 그 라이다가 이 프레임에서 드론을
+            # 못 잡았으면 빈칸이다. 두 칸이 다 차면 합이 cluster_points 와
+            # 같고, 한쪽만 채택된 프레임에서는 채택된 쪽과만 같다.
+            raw_header += [f'cluster_points_{cfg.name}' for cfg in self._sensors]
+            self._raw_csv_w.writerow(raw_header)
 
             self._traj_csv_path = output_dir / 'drone_trajectory.csv'
             self._traj_csv_f = open(self._traj_csv_path, 'w', newline='')
@@ -828,6 +889,9 @@ class LidarDroneTracker(Node):
             if pts is None or len(pts) == 0:
                 return
             pts_w = self._sensors[sensor_index].to_world(pts)
+        if self._max_sensor_range > 0.0:
+            d = np.linalg.norm(pts_w - self._sensors[sensor_index].t_s2w, axis=1)
+            pts_w = pts_w[d <= self._max_sensor_range]
         stamp_s = self._stamp_to_seconds(msg.header.stamp)
         recv_t = time.monotonic()
         q = self._cloud_queues[sensor_index]
@@ -835,9 +899,14 @@ class LidarDroneTracker(Node):
         if q and abs(q[-1][0] - stamp_s) < 1e-12:
             return
         q.append((stamp_s, pts_w, recv_t, msg.header.stamp))
+        if self._process_on_arrival:
+            self._process()
 
     def _select_unprocessed_pair(self, now):
-        """Return [(sensor_index, pts, stamp_msg), ...] with at most one cloud/sensor.
+        """Return [(sensor_index, pts, stamp_msg, recv_t), ...], <=1 cloud/sensor.
+
+        recv_t is the monotonic reading taken when the cloud arrived; the caller
+        turns it into the detection's age for the covariance's age term.
 
         If both sensors have fresh unprocessed frames, choose the pair with minimum
         |t1-t2|. If only one sensor has an unprocessed fresh frame, return it after
@@ -856,12 +925,28 @@ class LidarDroneTracker(Node):
                 candidates.append((stamp_s, pts, recv_t, stamp_msg))
             fresh.append(candidates)
 
+        if self.fusion_mode == 'sequential':
+            frames = sorted(((c[0], i, c) for i in (0, 1) for c in fresh[i]),
+                            key=lambda f: f[0])
+            for stamp_s, i, _ in frames:
+                self._last_processed_stamp_ns[i] = int(round(stamp_s * 1e9))
+            return [(i, c[1], c[3], c[2]) for _, i, c in frames]
+
         if fresh[0] and fresh[1]:
             best = None
             for a in fresh[0]:
                 for b in fresh[1]:
                     d = abs(a[0] - b[0])
-                    if best is None or d < best[0]:
+                    # <= (not <): 스캔이 완벽히 동기화된 소스(sim)에서는 모든
+                    # 후보 쌍의 dt가 0으로 동점이 난다. 엄격한 부등호면 동점을
+                    # 절대 안 바꾸므로 fresh[i]가 오래된 것부터 최신 순으로
+                    # 쌓이는 큐 순회 특성상 '가장 오래된' 쌍이 계속 이겨,
+                    # 매 틱 새로 도착한 쌍을 두고도 영구적인 FIFO 정체가
+                    # 생긴다(실측 참값 대비 지연 0.18s -> 0.07s로 개선,
+                    # A와 동일해짐). <=로 동점이면 나중에(=더 최신) 찾은
+                    # 쌍이 이기도록 해 최신 쌍을 우선한다 — 바로 아래
+                    # '한쪽만 있을 때' 분기가 이미 최신 우선인 것과도 맞춘다.
+                    if best is None or d <= best[0]:
                         best = (d, a, b)
             dt, a, b = best
             # Mark selected frames processed even if the dt is larger than the
@@ -869,7 +954,7 @@ class LidarDroneTracker(Node):
             self._last_processed_stamp_ns[0] = int(round(a[0] * 1e9))
             self._last_processed_stamp_ns[1] = int(round(b[0] * 1e9))
             self._record_sync_sample(dt)
-            return [(0, a[1], a[3]), (1, b[1], b[3])]
+            return [(0, a[1], a[3], a[2]), (1, b[1], b[3], b[2])]
 
         # One-sensor fallback. Prefer newest fresh unprocessed frame.
         for i in (0, 1):
@@ -879,7 +964,7 @@ class LidarDroneTracker(Node):
                 if now - a[2] < max(self.sync_tolerance, 0.002):
                     return []
                 self._last_processed_stamp_ns[i] = int(round(a[0] * 1e9))
-                return [(i, a[1], a[3])]
+                return [(i, a[1], a[3], a[2])]
         return []
 
     def _record_sync_sample(self, dt_sec):
@@ -919,14 +1004,21 @@ class LidarDroneTracker(Node):
 
         detections = []
         self._merge_buffer = []
-        for sensor_index, pts_w, stamp in selected:
+        self._sensor_cluster_pts = [None] * len(self._sensors)
+        for sensor_index, pts_w, stamp, recv_t in selected:
             self._stat_sensor_hits[sensor_index] += 1
             self._stat_sensor_pts[sensor_index] += len(pts_w)
+            # Age on the monotonic clock only: recv_t was taken with the same
+            # clock as `now`, so this holds whatever base the sensors stamp in.
             det = self._process_sensor_cloud(
                 sensor_index, pts_w, stamp, predicted,
+                age=max(0.0, now - recv_t),
                 detect=(self.fusion_mode != 'cloud'))
             if det is not None:
                 detections.append(det)
+                self._sensor_cluster_pts[sensor_index] = int(det.cluster_points)
+                self._stat_sensor_cluster_hits[sensor_index] += 1
+                self._stat_sensor_cluster_pts[sensor_index] += int(det.cluster_points)
 
         if self.learn_background:
             self._finalize_background_learning()
@@ -934,6 +1026,10 @@ class LidarDroneTracker(Node):
             return
 
         self._stat_frames += 1
+        if self.fusion_mode == 'sequential':
+            self._sequential_updates(detections, now)
+            self._maybe_log_stats(now)
+            return
         if self.fusion_mode == 'cloud':
             measurement, cov, out_stamp, fused_points, fused_cands, sensor_count, sync_dt = \
                 self._detect_from_merged_cloud(selected, predicted)
@@ -961,13 +1057,16 @@ class LidarDroneTracker(Node):
             self._stat_cand += fused_cands
 
             if self._run_active and self._raw_csv_w is not None:
-                self._raw_csv_w.writerow([
+                raw_row = [
                     f'{self._stamp_seconds(header):.9f}',
                     f'{measurement[0]:.6f}', f'{measurement[1]:.6f}', f'{measurement[2]:.6f}',
                     f'{cov[0,0]:.9f}', f'{cov[1,1]:.9f}', f'{cov[2,2]:.9f}',
                     int(fused_points), int(fused_cands), int(sensor_count),
                     '' if sync_dt is None else f'{sync_dt*1000.0:.3f}',
-                ])
+                ]
+                raw_row += ['' if n is None else int(n)
+                            for n in self._sensor_cluster_pts]
+                self._raw_csv_w.writerow(raw_row)
                 self._raw_csv_f.flush()
 
             if self._run_active and self.enable_waypoint_tracking:
@@ -975,7 +1074,13 @@ class LidarDroneTracker(Node):
             self._publish_pose(header)
         else:
             self._coast_count += 1
-            if self._kf.initialized:
+            # _last_meas_stamp_s 가 없으면 아직 관측이 하나도 없다는 뜻이다.
+            # seed_at_home 이 켜져 있으면 KF 는 시작 시점에 이미 initialized 가
+            # 되므로 이 조건이 없으면 관측 없이 홈 좌표가 그대로 발행되고,
+            # _coasting_stamp() 는 전진시킬 기준이 없어 ROS 클럭으로 떨어진다.
+            # 그러면 한 토픽에 센서 시계와 ROS 시계가 섞인다 — _coasting_stamp()
+            # 독스트링이 "첫 관측 전에는 발행되지 않는다"고 전제한 그 경로다.
+            if self._kf.initialized and self._last_meas_stamp_s is not None:
                 if self._coast_count <= self.coast_max:
                     self._publish_pose(header)
                 elif self._coast_count > self.reset_after:
@@ -996,7 +1101,7 @@ class LidarDroneTracker(Node):
     # Per-sensor processing
     # ------------------------------------------------------------------
     def _process_sensor_cloud(self, sensor_index, pts_w, stamp, predicted,
-                              detect=True):
+                              age=0.0, detect=True):
         """Per-sensor pipeline. Returns a Detection, or None.
 
         With detect=False it runs everything up to and including the filtered
@@ -1137,7 +1242,7 @@ class LidarDroneTracker(Node):
                 timings['filtered_pub_ms'] = (time.perf_counter() - t) * 1000.0
 
         if not detect:
-            self._merge_buffer.append((sensor_index, pts, stamp))
+            self._merge_buffer.append((sensor_index, pts, stamp, age))
             self._finish_sensor_timing(sensor_index, timings)
             return None
 
@@ -1158,7 +1263,8 @@ class LidarDroneTracker(Node):
             return None
 
         t = time.perf_counter() if timings is not None else None
-        det = self._select_drone_cluster(sensor_index, pts, labels, stamp, predicted)
+        det = self._select_drone_cluster(sensor_index, pts, labels, stamp,
+                                         predicted, age)
         if timings is not None:
             timings['select_ms'] = (time.perf_counter() - t) * 1000.0
             timings['detected'] = 1 if det is not None else 0
@@ -1204,7 +1310,8 @@ class LidarDroneTracker(Node):
     # ------------------------------------------------------------------
     # Cluster selection and covariance estimation
     # ------------------------------------------------------------------
-    def _select_drone_cluster(self, sensor_index, pts, labels, stamp, predicted):
+    def _select_drone_cluster(self, sensor_index, pts, labels, stamp,
+                              predicted, age=0.0, nearest_sensor_range=False):
         cfg = self._sensors[sensor_index]
         unique = [label for label in np.unique(labels) if label >= 0]
         if not unique:
@@ -1230,15 +1337,21 @@ class LidarDroneTracker(Node):
             centroid = np.median(cluster, axis=0)
             radial = np.linalg.norm(cluster - centroid, axis=1)
             spread = float(np.median(radial)) if len(radial) else 1.0
-            sensor_range = float(np.linalg.norm(centroid - cfg.t_s2w))
+            if nearest_sensor_range:
+                # A merged cluster has no single sensor; size R from the nearer one.
+                sensor_range = min(float(np.linalg.norm(centroid - c.t_s2w))
+                                   for c in self._sensors)
+            else:
+                sensor_range = float(np.linalg.norm(centroid - cfg.t_s2w))
             cov = self._estimate_detection_covariance(
-                cfg, cluster, centroid, spread, sensor_range)
+                cfg, cluster, centroid, spread, sensor_range, age)
 
             # A diagnostic quality score only; fusion itself uses covariance.
             quality = 1.0 / max(1e-9, float(np.trace(cov)))
             assoc_dist = 0.0 if predicted is None else float(
                 np.linalg.norm(centroid - predicted))
-            candidates.append((centroid, cov, n, spread, quality, sensor_range, assoc_dist))
+            candidates.append(
+                (centroid, cov, n, spread, quality, sensor_range, assoc_dist, label))
 
             m = Marker()
             m.header.frame_id = self.world_frame
@@ -1279,6 +1392,7 @@ class LidarDroneTracker(Node):
             candidates.sort(key=lambda c: c[4], reverse=True)
             best = candidates[0]
 
+        self._last_cluster_label = int(best[7])
         return Detection(
             sensor_index=sensor_index,
             sensor_name=cfg.name,
@@ -1292,17 +1406,28 @@ class LidarDroneTracker(Node):
             candidate_count=len(candidates),
         )
 
-    def _estimate_detection_covariance(self, cfg, cluster, centroid, spread, sensor_range):
+    def _estimate_detection_covariance(self, cfg, cluster, centroid, spread,
+                                       sensor_range, age=0.0):
         """Estimate a conservative 3x3 world-frame centroid covariance.
 
         Components:
           * empirical cluster covariance / N  -> centroid uncertainty
           * centroid noise floor
           * range-dependent term
-          * extrinsic calibration RMSE
+          * age term: reference speed x seconds since this scan was received
 
         This is not a complete OS1 beam model, but it is statistically meaningful
         and much better than treating point count as a fusion weight.
+
+        The extrinsic-RMSE term that used to sit here is gone. Outdoors a
+        Kabsch/SVD extrinsic lands at a few centimetres, which is below the
+        floor term already in the sum, so it only shifted every detection's
+        covariance by the same constant and never changed the relative
+        weighting of the two sensors. Age does change it: a stale detection is
+        genuinely worse than a fresh one, and until now nothing in R said so --
+        the pairing backlog this node used to run with (see
+        _select_unprocessed_pair) inflated every measurement's real error by
+        ~0.1 s of travel and the covariance reported it as perfectly good.
         """
         n = max(1, len(cluster))
         if n >= 3:
@@ -1315,8 +1440,8 @@ class LidarDroneTracker(Node):
         centroid_cov = empirical / float(n)
         base_std = self.centroid_noise_floor
         range_std = self.range_noise_per_meter * max(0.0, sensor_range)
-        extr_std = cfg.extrinsic_rmse
-        isotropic_var = base_std**2 + range_std**2 + extr_std**2
+        age_std = self.age_noise_velocity * max(0.0, age)
+        isotropic_var = base_std**2 + range_std**2 + age_std**2
         cov = centroid_cov + np.eye(3) * isotropic_var
 
         # Clamp eigenvalues to avoid extreme confidence or instability.
@@ -1368,6 +1493,9 @@ class LidarDroneTracker(Node):
 
         pts = np.vstack([m[1] for m in merged])
         stamps = [m[2] for m in merged]
+        # The merged cloud is only as fresh as its stalest half, so the age
+        # term takes the worst of the two rather than an average.
+        age = max((m[3] for m in merged), default=0.0)
         sensor_count = len(merged)
         sync_dt = None
         if sensor_count == 2:
@@ -1393,11 +1521,77 @@ class LidarDroneTracker(Node):
 
         # Attributed to sensor 0 purely so covariance and markers have a
         # sensor to reference; the cluster itself spans both.
-        det = self._select_drone_cluster(0, pts, labels, stamp, predicted)
+        det = self._select_drone_cluster(0, pts, labels, stamp, predicted, age,
+                                         nearest_sensor_range=True)
         if det is None:
             return None, None, None, 0, 0, sensor_count, sync_dt
+
+        # 병합 클러스터에는 두 라이다의 점이 섞여 있다. 위 vstack 의 행 순서가
+        # 그대로 남아 있으니 구간을 잘라 각자 몇 점을 냈는지 되돌린다.
+        chosen = labels == self._last_cluster_label
+        offset = 0
+        for s_idx, s_pts, *_ in merged:     # (sensor, points, stamp, age)
+            n_s = len(s_pts)
+            c = int(np.count_nonzero(chosen[offset:offset + n_s]))
+            self._sensor_cluster_pts[s_idx] = c
+            self._stat_sensor_cluster_hits[s_idx] += 1
+            self._stat_sensor_cluster_pts[s_idx] += c
+            offset += n_s
+
         return (det.position.copy(), det.covariance.copy(), det.stamp,
                 det.cluster_points, det.candidate_count, sensor_count, sync_dt)
+
+    def _sequential_updates(self, detections, now):
+        """SU: one Kalman update per sensor detection, in timestamp order.
+
+        Detection, gating and covariance are exactly the MF ones; only the
+        fusion step differs -- no pairing, no agreement check, and each
+        detection is published as soon as it has been applied.
+        """
+        if not detections:
+            self._coast_count += 1
+            if self._coast_count > self.reset_after and self._kf.initialized:
+                self.get_logger().warn(
+                    f'Tracking lost for {self._coast_count} frames -> KF reset')
+                self._kf.initialized = False
+                self._coast_count = 0
+                if self._run_active:
+                    self._finalize_waypoint_episode()
+            return
+        detections = sorted(detections, key=lambda d: self._stamp_to_seconds(d.stamp))
+        prev_t = None
+        for det in detections:
+            t = self._stamp_to_seconds(det.stamp)
+            if prev_t is not None and self._kf.initialized and t > prev_t:
+                self._kf.predict(t - prev_t)
+            prev_t = t
+            if not self._kf.initialized:
+                self._kf.init(det.position, det.covariance)
+            else:
+                self._kf.update(det.position, det.covariance)
+            self._coast_count = 0
+            self._stat_detect += 1
+            self._stat_cluster_pts += det.cluster_points
+            self._stat_cand += det.candidate_count
+            self._last_meas_stamp_s = t
+            self._last_meas_monotonic = now
+            if self._run_active and self._raw_csv_w is not None:
+                # SU는 행 하나가 라이다 하나의 관측이다 — 그 라이다 칸만 채우고 나머지는 빈칸.
+                per_sensor = ['' if i != det.sensor_index else int(det.cluster_points)
+                              for i in range(len(self._sensors))]
+                self._raw_csv_w.writerow([
+                    f'{t:.9f}', f'{det.position[0]:.6f}', f'{det.position[1]:.6f}',
+                    f'{det.position[2]:.6f}', f'{det.covariance[0,0]:.9f}',
+                    f'{det.covariance[1,1]:.9f}', f'{det.covariance[2,2]:.9f}',
+                    int(det.cluster_points), int(det.candidate_count), 1, '',
+                    *per_sensor])
+                self._raw_csv_f.flush()
+            if self._run_active and self.enable_waypoint_tracking:
+                self._update_waypoint_tracking(det.position)
+            header = Header()
+            header.frame_id = self.world_frame
+            header.stamp = det.stamp
+            self._publish_pose(header)
 
     def _fuse_detections(self, detections, predicted):
         if not detections:
@@ -1500,6 +1694,21 @@ class LidarDroneTracker(Node):
                 cov[r * 6 + c] = float(cov_pos[r, c])
         msg.pose.covariance = cov
         self._pub_pose.publish(msg)
+
+        odom = Odometry()
+        odom.header = msg.header
+        odom.child_frame_id = 'drone'
+        odom.pose = msg.pose
+        odom.twist.twist.linear.x = float(vel[0])
+        odom.twist.twist.linear.y = float(vel[1])
+        odom.twist.twist.linear.z = float(vel[2])
+        cov_vel = self._kf.P[3:6, 3:6]
+        vcov = [0.0] * 36
+        for r in range(3):
+            for c in range(3):
+                vcov[r * 6 + c] = float(cov_vel[r, c])
+        odom.twist.covariance = vcov
+        self._pub_odom.publish(odom)
 
         if self._run_active and self._traj_csv_w is not None:
             self._traj_csv_w.writerow([
@@ -1711,6 +1920,8 @@ class LidarDroneTracker(Node):
         self._stat_cand = 0
         self._stat_sensor_pts = [0, 0]
         self._stat_sensor_hits = [0, 0]
+        self._stat_sensor_cluster_pts = [0, 0]
+        self._stat_sensor_cluster_hits = [0, 0]
 
     def _maybe_log_stats(self, now):
         if now - self._stat_t0 < self._stat_period:
@@ -1738,7 +1949,12 @@ class LidarDroneTracker(Node):
             for i, cfg in enumerate(self._sensors):
                 hits = self._stat_sensor_hits[i]
                 avg = self._stat_sensor_pts[i] / hits if hits else 0.0
-                sensors.append(f'{cfg.name}:{avg:.0f}pts/{hits}frames')
+                c_hits = self._stat_sensor_cluster_hits[i]
+                c_avg = (self._stat_sensor_cluster_pts[i] / c_hits
+                         if c_hits else 0.0)
+                sensors.append(
+                    f'{cfg.name}: raw {avg:.0f}pts/{hits}frames, '
+                    f'cluster {c_avg:.1f}pts/{c_hits}det')
             self.get_logger().info(
                 f'Detection {det}/{f} ({rate:.0f}%), '
                 f'cluster={avg_pts:.1f}pts, candidates={avg_cand:.1f}, '

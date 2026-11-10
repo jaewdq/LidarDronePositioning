@@ -1,0 +1,127 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+  - Class: rviz_common/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid (1 m)
+      Enabled: true
+      Cell Size: 1
+      Plane Cell Count: 10
+    - Class: rviz_default_plugins/PointCloud2
+      Name: lidar1 원본 (빨강)
+      Enabled: true
+      Topic: {Value: /lidar1/points, Reliability Policy: Best Effort, Depth: 5}
+      Style: Points
+      Size (Pixels): 2
+      Color Transformer: FlatColor
+      Color: 255; 110; 110
+      Alpha: 0.35
+    - Class: rviz_default_plugins/PointCloud2
+      Name: lidar2 원본 (파랑)
+      Enabled: true
+      Topic: {Value: /lidar2/points, Reliability Policy: Best Effort, Depth: 5}
+      Style: Points
+      Size (Pixels): 2
+      Color Transformer: FlatColor
+      Color: 110; 160; 255
+      Alpha: 0.35
+    - Class: rviz_default_plugins/PointCloud2
+      Name: lidar1 ROI 안 점
+      Enabled: true
+      Topic: {Value: /lidar1/filtered_points, Reliability Policy: Best Effort, Depth: 5}
+      Style: Spheres
+      Size (m): 0.03
+      Color Transformer: FlatColor
+      Color: 255; 40; 40
+      Alpha: 1
+    - Class: rviz_default_plugins/PointCloud2
+      Name: lidar2 ROI 안 점
+      Enabled: true
+      Topic: {Value: /lidar2/filtered_points, Reliability Policy: Best Effort, Depth: 5}
+      Style: Spheres
+      Size (m): 0.03
+      Color Transformer: FlatColor
+      Color: 40; 100; 255
+      Alpha: 1
+    - Class: rviz_default_plugins/Marker
+      Name: 필드 3x2
+      Enabled: true
+      Topic: {Value: /viz/field, Reliability Policy: Reliable}
+    - Class: rviz_default_plugins/Marker
+      Name: 트래커 ROI
+      Enabled: true
+      Topic: {Value: /viz/roi, Reliability Policy: Reliable}
+    - Class: rviz_default_plugins/MarkerArray
+      Name: 물체 좌표 (SU)
+      Enabled: true
+      Topic: {Value: /viz/positions, Reliability Policy: Reliable}
+    - Class: rviz_default_plugins/Axes
+      Name: 원점 축 (x 빨강, y 초록, z 파랑)
+      Enabled: true
+      Reference Frame: map
+      Length: 0.4
+      Radius: 0.015
+    - Class: rviz_default_plugins/MarkerArray
+      Name: 군집
+      Enabled: true
+      Topic: {Value: /lidar/cluster_markers, Reliability Policy: Reliable}
+    - Class: rviz_default_plugins/PoseWithCovariance
+      Name: lidar1 관측
+      Enabled: false
+      Topic: {Value: /drone/lidar1_pose, Reliability Policy: Reliable}
+      Shape: Arrow
+      Color: 255; 60; 60
+      Covariance: {Value: false}
+    - Class: rviz_default_plugins/PoseWithCovariance
+      Name: lidar2 관측
+      Enabled: false
+      Topic: {Value: /drone/lidar2_pose, Reliability Policy: Reliable}
+      Shape: Arrow
+      Color: 60; 120; 255
+      Covariance: {Value: false}
+    - Class: rviz_default_plugins/PoseWithCovariance
+      Name: 추정 위치 (SU)
+      Enabled: true
+      Topic: {Value: /drone/estimated_pose, Reliability Policy: Reliable}
+      Shape: Axes
+      Axes Length: 0.2
+      Axes Radius: 0.012
+      Covariance: {Value: true, Position: {Value: true, Scale: 1}}
+    - Class: rviz_default_plugins/Path
+      Name: 추정 궤적
+      Enabled: true
+      Topic: {Value: /viz/track, Reliability Policy: Reliable}
+      Color: 0; 220; 120
+      Line Style: Billboards
+      Line Width: 0.03
+  Tools:
+    - Class: rviz_default_plugins/Interact
+      Hide Inactive Objects: true
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/FocusCamera
+    - Class: rviz_default_plugins/Measure
+      Line color: 128; 128; 0
+    - Class: rviz_default_plugins/PublishPoint
+      Single click: true
+      Topic: {Value: /clicked_point}
+  Global Options:
+    Fixed Frame: map
+    Background Color: 30; 30; 36
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 7.5
+      Focal Point:
+        X: 1.5
+        Y: 1.0
+        Z: 0.5
+      Pitch: 0.75
+      Yaw: -1.2
+Window Geometry:
+  Height: 950
+  Width: 1500
